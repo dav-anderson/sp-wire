@@ -187,6 +187,7 @@ fn the_fsp_wire_bytes_are_unchanged() {
             max_request_bytes: 1_048_576,
             issue_max_items: Some(1000),
             spend_max_items: None,
+            spend_max_memo_bytes: None,
         },
     );
     json(

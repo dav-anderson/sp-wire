@@ -59,7 +59,7 @@ pub struct KeysetsResponse {
 pub const MAX_ROLLOVER_NOTES: usize = 1000;
 
 /// `POST /rollover`: notes in, fresh notes of exactly the same amounts out,
-/// signed with the current keyset. Every input signs `transaction_sighash`
+/// signed with the keyset the request names. Every input signs `transaction_sighash`
 /// over the inputs and outputs, as in a mint-core swap.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RolloverRequest {
@@ -69,7 +69,7 @@ pub struct RolloverRequest {
     pub input_keysets: Vec<String>,
     pub inputs: Vec<MintInput>,
     /// The keyset the outputs are to be signed with: the current or the
-    /// previous one (normally the current).
+    /// previous one, whichever is named (a set that is not live is refused).
     #[serde(default)]
     pub keyset: String,
     pub outputs: Vec<MintOutput>,

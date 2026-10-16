@@ -10,7 +10,7 @@ pub const MAX_ROLLOVER_NOTES: usize = 1000;
 
 /// `POST /rollover`: ESP notes of one service and one redeemable-after day in,
 /// fresh notes of exactly the same amounts and the same terms out, signed with
-/// the current key set. The holder signs (each note's spend key over
+/// the key set the request names. The holder signs (each note's spend key over
 /// [`RolloverRequest::digest`]); the service's signature is not needed,
 /// because nothing moves to anyone and nothing is split.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub struct RolloverRequest {
     #[serde(default)]
     pub input_keysets: Vec<String>,
     pub inputs: Vec<MintInput>,
-    /// The keyset to sign the outputs with (normally the current one).
+    /// The keyset to sign the outputs with: the current or the previous one.
     #[serde(default)]
     pub keyset: String,
     pub outputs: Vec<MintOutput>,

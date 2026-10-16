@@ -72,10 +72,10 @@ pub struct RedeemRequest {
     /// The service redeeming (its DID key, x-only).
     pub service: XOnlyPublicKey,
     /// The keyset to sign the refund and decline outputs with (16 hex
-    /// characters). A new request must name the current keyset (the previous
-    /// one is refused `keyset_not_current`). A decline signed later is signed by
-    /// the current keyset whatever this says; the signatures name the keyset
-    /// that signed.
+    /// characters): the current or the previous one. A set that is not live is
+    /// refused (`keyset_retired`, `unknown_keyset`). A decline signed later is
+    /// signed by this set if it is still live, and by the current set if it
+    /// has been deleted since; the signatures name the keyset that signed.
     pub output_keyset: String,
     pub inputs: Vec<RedeemInput>,
     /// Where the payout goes. The service signs it, so it cannot be redirected.

@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 
 pub use crate::keyset::{KeysetWindow, RotationResponse};
 
-/// The longest spend memo, in bytes.
+/// The default for the longest spend memo, in bytes. A mint's `spend.max_memo_bytes`
+/// setting decides; `GET /fees` serves the value in force.
 pub const MAX_MEMO_BYTES: usize = 256;
 
 /// An ESP note handed to the service, with its spend secret (the wallet's
@@ -203,6 +204,10 @@ pub struct FeesResponse {
     pub issue_max_items: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spend_max_items: Option<u64>,
+    /// `spend.max_memo_bytes`: the longest spend memo. `None` from a mint that
+    /// does not say (the default is `MAX_MEMO_BYTES`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_max_memo_bytes: Option<u64>,
 }
 
 /// A refusal's body: `{"error", "code"}`.

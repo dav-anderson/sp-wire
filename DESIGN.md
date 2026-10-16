@@ -1,0 +1,51 @@
+# sp-wire: design notes
+
+## What goes here and what does not
+
+This crate holds types, encodings and constants only. It has no storage, no HTTP
+server, no settlement logic and no config, so a wallet app can use it without
+pulling in any mint code. The note, nonce, blinded output and mint input/output
+types are mint-core's (`mint_types`); sp-wire depends on that crate at its
+release tag and re-exports them, so there is one definition. It does not depend
+on `mint-core` or `mint-server`.
+
+The request hashes (`request_hash`, `hash`, `digest`) live here with the types they
+cover. They are part of the wire, because a retry gets its stored answer by hash.
+
+## The wire version
+
+`WIRE_VERSION` is bumped for any change to an encoded byte or a JSON field. That
+covers a new, renamed or reordered field, a changed tag in a hash
+(`esp-mint/redeem/v2`, ...), a changed size constant, a changed unit and a changed
+error code. A new optional field a reader can ignore still counts: an older
+wallet would sign over a different request than the mint hashes.
+
+The goldens in `tests/golden/*.txt` were captured from the v0.1.0 mints before
+this crate existed, so that moving the types out of the mints provably changed no
+byte. They are the specification. The only lines that have moved since are the
+sealed-payload ones (wire version 2, below).
+
+## The seal and AIR
+
+The PSP payload is encrypted to the mint's DID public key with AIR's public key
+encryption, so nothing in it is visible on chain. The format is AIR's, not ours:
+`64-byte ElligatorSwift sender key || 16-byte tag || ciphertext`, a constant 80
+bytes of overhead whatever the payload length. Anything under 81 bytes cannot be a
+sealed payload, and an empty plaintext cannot be sealed (AIR cannot open a
+message with no bytes in it).
+
+AIR 1.1.0 returned an `Encrypted(Init, Message)` struct that was stored as its
+`postcard` encoding (82 or 83 bytes of overhead). AIR 2.0.3 returns raw bytes. A
+version 1 sealed payload does not open under version 2, and the other way round,
+which is why the change is a wire version and not a patch. Nothing else moved.
+
+`PublicKey` Display and FromStr are the 33-byte compressed hex (66 characters),
+the same as the DID, so the published mint key and the DID in the payload did not
+change. The byte-array and serde forms of AIR's public key are the 64-byte
+ElligatorSwift form; sp-wire uses only Display, FromStr and `SecretKey`'s serde
+(a 32-byte hex string), so existing `mint_did_key.json` files still load.
+
+AIR 2.0.3 uses `secp256k1` 0.31 and this crate (like mint-core) uses 0.30. The two
+versions sit side by side and no type crosses between them: the DID keys are AIR's
+own types, and the rest of the wire is `secp256k1` 0.30. AIR's default feature
+`stream` must stay on (its websocket module uses it unconditionally).

@@ -16,8 +16,9 @@ pub struct Payload {
     pub outputs: Vec<MintOutput>,
     /// The keyset the outputs were blinded for (`GET /keysets`), as 16 hex
     /// characters; 8 bytes after the outputs on the wire. Optional, so older
-    /// payloads still decode. The mint signs a claim with its current keyset
-    /// and prints that keyset's ID with the signatures.
+    /// payloads still decode. The mint signs with this keyset while it is live,
+    /// and otherwise with its current keyset; it prints the ID of the keyset
+    /// that signed with the signatures.
     pub keyset: Option<String>,
 }
 

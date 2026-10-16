@@ -7,8 +7,13 @@
 pub const KEYSET_RETIRED: &str = "keyset_retired";
 /// The mint never had this key set.
 pub const UNKNOWN_KEYSET: &str = "unknown_keyset";
-/// The key set is live but not the current one: new outputs are signed by the
-/// current set only.
+/// Reserved, and no longer sent. Mints used to refuse new outputs that named
+/// the previous key set with this code; they now sign with whichever live set
+/// the request names, and answer `keyset_retired` or `unknown_keyset` for a
+/// set that is not live. The name stays so that existing code that spells it
+/// still builds, and so that a wallet can recognise it from a mint that still
+/// sends it. Removing it would change no byte on the wire, but it would break
+/// every crate that names it.
 pub const KEYSET_NOT_CURRENT: &str = "keyset_not_current";
 /// A resumed rollover or transfer is finished only with proof of its burn.
 pub const BURN_NOT_PROVEN: &str = "burn_not_proven";

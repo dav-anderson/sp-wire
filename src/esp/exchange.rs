@@ -26,7 +26,8 @@ pub struct ExchangeRequest {
     /// which verifies each note, and checks its spent list, by that keyset.
     #[serde(default)]
     pub psp_input_keysets: Vec<String>,
-    /// The ESP keyset to sign the outputs with: current or previous.
+    /// The ESP keyset to sign the outputs with: current or previous, whichever
+    /// is named.
     #[serde(default)]
     pub keyset: String,
     /// The ESP notes wanted, blinded. Any non-zero amount.

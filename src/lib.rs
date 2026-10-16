@@ -5,6 +5,7 @@
 //!
 //! - [`units`]: PSP, ESP and FSP units and the rate between them.
 //! - [`keyset`]: the key-set ID and the `GET /rotation` body.
+//! - [`keys`]: `GET /keys` and `POST /check-state`, the bodies of mint-core's server.
 //! - [`payload`] and [`seal`]: the PSP OP_RETURN payload and its encryption.
 //! - [`psp`], [`esp`] and [`fsp`]: the request and response bodies of each mint.
 //! - [`codes`]: the `code` of an error body.
@@ -20,6 +21,7 @@ pub mod codes;
 pub mod dec;
 pub mod esp;
 pub mod fsp;
+pub mod keys;
 pub mod keyset;
 pub mod payload;
 pub mod psp;
