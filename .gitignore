@@ -2,3 +2,4 @@
 .DS_Store
 .cargo/
 /Cargo.lock
+_to_delete/

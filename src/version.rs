@@ -6,8 +6,13 @@
 
 use std::fmt;
 
-/// The version of every encoding in this crate. Starts at 1.
-pub const WIRE_VERSION: u32 = 1;
+/// The version of every encoding in this crate.
+///
+/// - 1: the formats of the v0.1.0 mints (sp-wire 0.1.0).
+/// - 2: the sealed payload moved to AIR 2.0.3's encryption (sp-wire 0.2.0): the
+///   raw sender key, tag and ciphertext, 80 bytes of overhead, in place of the
+///   `postcard` encoding of AIR 1.1.0's `Encrypted`. Nothing else changed.
+pub const WIRE_VERSION: u32 = 2;
 
 /// A mint speaks another wire version than this build.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,25 +64,26 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_wire_version_starts_at_one() {
-        assert_eq!(WIRE_VERSION, 1);
+    fn the_wire_version_is_two() {
+        assert_eq!(WIRE_VERSION, 2);
     }
 
     #[test]
     fn the_same_version_passes() {
         assert_eq!(
-            check_health(&json!({"status": "ok", "wire_version": 1})),
+            check_health(&json!({"status": "ok", "wire_version": WIRE_VERSION})),
             Ok(())
         );
     }
 
     #[test]
     fn another_version_is_refused_and_says_both() {
-        let e = check_health(&json!({"wire_version": 2})).unwrap_err();
-        assert_eq!(e, WireMismatch::Different { mint: 2, ours: 1 });
+        // a mint still on version 1 (the old seal format)
+        let e = check_health(&json!({"wire_version": 1})).unwrap_err();
+        assert_eq!(e, WireMismatch::Different { mint: 1, ours: 2 });
         let text = e.to_string();
         assert!(
-            text.contains("wire version 2") && text.contains("speaks 1"),
+            text.contains("wire version 1") && text.contains("speaks 2"),
             "{text}"
         );
     }
@@ -86,12 +92,12 @@ mod tests {
     fn a_health_without_a_version_is_refused() {
         for body in [
             json!({"status": "ok"}),
-            json!({"wire_version": "1"}),
+            json!({"wire_version": "2"}),
             json!({"wire_version": null}),
         ] {
             assert_eq!(
                 check_health(&body),
-                Err(WireMismatch::Missing { ours: 1 }),
+                Err(WireMismatch::Missing { ours: 2 }),
                 "{body}"
             );
         }

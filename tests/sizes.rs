@@ -75,8 +75,8 @@ fn request(inputs: usize, memo: &str, decline: usize, refund: usize) -> RedeemRe
 }
 
 #[test]
-fn the_wire_version_is_one() {
-    assert_eq!(sp_wire::WIRE_VERSION, 1);
+fn the_wire_version_is_two() {
+    assert_eq!(sp_wire::WIRE_VERSION, 2);
 }
 
 #[test]
@@ -195,4 +195,20 @@ fn the_units_are_ten_psp_to_the_dollar() {
     assert_eq!(10 * u128::from(ESP_PER_PSP), ESP_PER_USD);
     assert_eq!(MAX_PSP_DENOMINATION, 1 << 24);
     assert_eq!(MAX_PSP_PER_NOTE, 184_467_440);
+}
+
+#[test]
+fn a_sealed_payload_is_80_bytes_longer_than_its_payload() {
+    use sp_wire::seal::{OVERHEAD, SENDER_KEY_BYTES, TAG_BYTES};
+    assert_eq!(SENDER_KEY_BYTES, 64);
+    assert_eq!(TAG_BYTES, 16);
+    assert_eq!(OVERHEAD, 80);
+    // What goes in the OP_RETURN for n outputs without a keyset: the 35-byte
+    // payload header and 41 an output, then the seal. A purchase of the largest
+    // allowed 255 outputs is 35 + 41 * 255 + 80 = 10_570 bytes.
+    let sealed = |n: usize| 35 + 41 * n + OVERHEAD;
+    assert_eq!(sealed(1), 156);
+    assert_eq!(sealed(255), 10_570);
+    // With the keyset the payload carries, 8 bytes more.
+    assert_eq!(sealed(1) + 8, 164);
 }

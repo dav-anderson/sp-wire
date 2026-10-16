@@ -213,35 +213,64 @@ fn the_psp_wire_bytes_are_unchanged() {
     );
 }
 
-/// The sealed payload: a blob made by the v0.1.0 mint code opens, and the
-/// overhead of sealing is the same.
+/// A sealed payload made by the v0.1.x code (AIR 1.1.0, wire version 1): the
+/// `postcard` encoding of its `Encrypted`. It opens with the key below under
+/// AIR 1.1.0 and must not open any more.
+#[cfg(feature = "seal")]
+const SEALED_WIRE_VERSION_1: &str = "406ee6680dcc2616b63cedca37462e6b90aead2837f4e106788d85300316ed78414335cd52dcc468b302076d7f819024738777ca6e4d3c1b0963c46928f5e1df814fcf80cb9e2fb580acffbd548773a065a6016b34c8fd028ef1366d47d1406ba434cdb4e339da1b1f8ff7f02249690b2499577d05c79ee441c61d207e2dd422ef069cce944f768b019bdb607e0bbff067a7768d6ac95c888a516f27395e3f3d78dbc8420e8933e527fd62f614c83e323f74d8e9dccdae4908dfcff4f28f6894575610f3826966f08c8866248986b0c421102484601b201e0ecee479cd9cfb38c33648accaa24ff4c18d882a4bd23885b451de0bc50a5e3a51";
+
+/// The sealed payload (wire version 2, AIR 2.0.3): a blob made by this code opens,
+/// the overhead is a constant 80, and a version 1 blob does not open.
 #[cfg(feature = "seal")]
 fn sealed_payload() {
     use sp_wire::seal::{self, SecretKey};
     let secret: SecretKey = serde_json::from_str(expected("seal_secret_json")).unwrap();
+    // The DID key is published as 33 bytes of hex, and that did not change.
     assert_eq!(secret.public_key().to_string(), expected("seal_public_hex"));
+    assert_eq!(expected("seal_public_hex").len(), 66);
     let sealed = hex::decode(expected("seal_sealed")).unwrap();
     let plain = seal::decrypt(&secret, &sealed).unwrap();
     assert_eq!(hex::encode(&plain), expected("seal_plain"));
     assert_eq!(plain.len().to_string(), expected("seal_plain_len"));
     assert_eq!(sealed.len().to_string(), expected("seal_sealed_len"));
-    assert_eq!(sealed.len() - plain.len(), seal::OVERHEAD_LONG);
-    // A fresh seal is random, but its size is not.
+    assert_eq!(sealed.len() - plain.len(), seal::OVERHEAD);
+    assert_eq!(seal::OVERHEAD.to_string(), expected("seal_overhead_20"));
+    assert_eq!(seal::OVERHEAD.to_string(), expected("seal_overhead_200"));
+    // A fresh seal is random, but its size is not, and it is the same for a short
+    // and a long payload (there is no length byte any more).
     let short = seal::encrypt(&secret.public_key(), &[9u8; 20]).unwrap();
     let long = seal::encrypt(&secret.public_key(), &[9u8; 200]).unwrap();
-    assert_eq!(short.len() - 20, seal::OVERHEAD_SHORT);
-    assert_eq!(long.len() - 200, seal::OVERHEAD_LONG);
+    assert_eq!(short.len() - 20, seal::OVERHEAD);
+    assert_eq!(long.len() - 200, seal::OVERHEAD);
     assert_eq!(seal::decrypt(&secret, &short).unwrap(), vec![9u8; 20]);
-    // Bytes left over, or too few, are not a sealed payload.
+    assert_eq!(seal::decrypt(&secret, &long).unwrap(), vec![9u8; 200]);
+    // Too short to hold a ciphertext is not a sealed payload.
+    assert_eq!(seal::decrypt(&secret, &[]), Err(seal::SealError::Malformed));
+    assert_eq!(
+        seal::decrypt(&secret, &short[..seal::OVERHEAD]),
+        Err(seal::SealError::Malformed)
+    );
+    // Anything of a plausible length that does not open is undecryptable: bytes
+    // left over, a byte short, or a version 1 blob.
     let mut extra = short.clone();
     extra.push(0);
     assert_eq!(
         seal::decrypt(&secret, &extra),
-        Err(seal::SealError::Malformed)
+        Err(seal::SealError::Undecryptable)
     );
     assert_eq!(
-        seal::decrypt(&secret, &short[..10]),
-        Err(seal::SealError::Malformed)
+        seal::decrypt(&secret, &short[..short.len() - 1]),
+        Err(seal::SealError::Undecryptable)
+    );
+    let v1 = hex::decode(SEALED_WIRE_VERSION_1).unwrap();
+    assert_eq!(
+        seal::decrypt(&secret, &v1),
+        Err(seal::SealError::Undecryptable)
+    );
+    // Nothing to seal.
+    assert_eq!(
+        seal::encrypt(&secret.public_key(), &[]),
+        Err(seal::SealError::Empty)
     );
     assert_eq!(
         seal::parse_public_key(expected("seal_public_hex"))

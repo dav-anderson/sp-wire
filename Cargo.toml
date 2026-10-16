@@ -1,6 +1,6 @@
 [package]
 name = "sp-wire"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -9,7 +9,7 @@ description = "The wire types, encodings and constants shared by the Service Poi
 [features]
 default = []
 # Seal and open the PSP payload. Needs AIR, so it is off unless asked for.
-seal = ["dep:air", "dep:postcard"]
+seal = ["dep:air"]
 
 [dependencies]
 # mint-core is pinned to its release tag; only its types crate is used.
@@ -19,11 +19,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4.3"
-# AIR has no tags, so it is pinned by commit (1.1.0). Its own manifest names
-# ../substance by path, so building it from git needs the local [patch] in the
-# top-level README until that is changed upstream.
-air = { git = "https://github.com/ramp-stack/air", rev = "6dd01171dfd80c5e3ae6e948013377f8b7e39022", optional = true }
-postcard = { version = "1.1.3", features = ["alloc"], optional = true }
+# AIR has no tags, so it is pinned by commit: 2.0.3 on master (11 Oct 2026). Its
+# manifest has no path dependency, so it builds from git as it is.
+air = { git = "https://github.com/ramp-stack/air", rev = "8e281d585ef0280812c109f67e248d5579c1970e", optional = true }
 
 [dev-dependencies]
 secp256k1 = { version = "0.30", default-features = false, features = ["global-context", "serde"] }
@@ -34,4 +32,4 @@ secp256k1 = { version = "0.30", default-features = false, features = ["global-co
 # [patch."https://github.com/dav-anderson/mint-core.git"]
 # mint-types = { path = "../mint-core-v0.1.3/crates/mint-types" }
 # [patch."https://github.com/ramp-stack/air"]
-# air = { path = "../air" }
+# air = { path = "../air" }   # only to try an unpushed change to AIR
