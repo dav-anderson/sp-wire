@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+No byte on the wire changes, and `WIRE_VERSION` stays 2.
+
+- New module `storage`: `ServiceId` (a 32-byte x-only key, 64 hex characters; a 33-byte DID key is reduced to it), `StoragePolicy` (an ordered list of service IDs, index 0 the primary, at most 8, no duplicates, no empty entry; empty is local only, one entry has a local backup), `DataKind` (`mint_state`, `wallet`, `app`, with the setting keys `storage.<kind>`), `Redundancy` and `StorageError`. `StoragePolicy::parse` reads the comma-separated form used in the environment, and the serde form is a JSON list of hex strings. It is the one parser and validator the three mints and the wallet use for their storage settings. Config only: nothing in it reads or writes the AIR or a file.
+- Tests: the unit tests in `src/storage.rs` (both ID forms, the order and primary, one and none, empty entries, duplicates written two ways, the limit, the kinds, JSON).
+
 ## 0.3.0
 
 No byte on the wire changes, and `WIRE_VERSION` stays 2.

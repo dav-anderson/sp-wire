@@ -6,7 +6,8 @@ encodings and the constants. `psp-mint`, `esp-mint`, `fsp-mint` and
 disagree about a byte.
 
 This is the wire only. It has no storage, no HTTP server, no settlement logic and
-no config, and its dependencies are small (`mint-types`, `secp256k1`, `serde`,
+no config files (the one exception is the storage policy's parser, `storage`, which
+does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`,
 `sha2`, `hex`). A wallet app can use it without pulling in any mint code.
 
 ## Layout
@@ -23,6 +24,7 @@ no config, and its dependencies are small (`mint-types`, `secp256k1`, `serde`,
 | `codes` | the `code` of an error body: `keyset_retired`, `unknown_keyset`, `keyset_not_current` (reserved: no mint sends it), `burn_not_proven`, `note_spent_elsewhere`, ... |
 | `dec` | a `u128` as a decimal string in JSON |
 | `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
+| `storage` | not wire: the storage policy (an ordered list of service IDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
 (`mint_types`). sp-wire depends on that crate at its release tag and re-exports

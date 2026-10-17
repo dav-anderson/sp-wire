@@ -1,7 +1,10 @@
 //! sp-wire: everything the Service Points mints and wallets exchange.
 //!
 //! Types, encodings and constants only: no storage, no HTTP, no settlement, no
-//! config. A wallet can use this crate without any mint code.
+//! config files. A wallet can use this crate without any mint code. The one
+//! piece of configuration is [`storage`], the type and parser of the storage
+//! policy, shared so that the mints and the wallet read a service list the same
+//! way; it does no I/O.
 //!
 //! - [`units`]: PSP, ESP and FSP units and the rate between them.
 //! - [`keyset`]: the key-set ID and the `GET /rotation` body.
@@ -10,6 +13,8 @@
 //! - [`psp`], [`esp`] and [`fsp`]: the request and response bodies of each mint.
 //! - [`codes`]: the `code` of an error body.
 //! - [`version`]: [`WIRE_VERSION`] and the check a wallet makes against `/health`.
+//! - [`storage`]: the storage policy (an ordered list of service IDs per kind of
+//!   data), its parser and its checks. Not part of the wire.
 //!
 //! The note, nonce, blinded output and mint input/output types are mint-core's
 //! (`mint_types`), re-exported here.
@@ -26,6 +31,7 @@ pub mod keyset;
 pub mod payload;
 pub mod psp;
 pub mod seal;
+pub mod storage;
 pub mod units;
 pub mod version;
 

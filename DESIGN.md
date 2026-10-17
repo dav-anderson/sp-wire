@@ -3,8 +3,18 @@
 ## What goes here and what does not
 
 This crate holds types, encodings and constants only. It has no storage, no HTTP
-server, no settlement logic and no config, so a wallet app can use it without
-pulling in any mint code. The note, nonce, blinded output and mint input/output
+server, no settlement logic and no config files, so a wallet app can use it without
+pulling in any mint code.
+
+The one exception is `storage`, the type and parser of the storage policy (an
+ordered list of service IDs for each kind of data; index 0 is the primary). It is
+here because the three mints and the wallet must read and refuse a service list in
+exactly the same way, and sp-wire is the one crate all four already depend on
+(mint-core is not ours to change). It is not wire: no byte of it travels, it does
+no I/O, and it does not affect `WIRE_VERSION`. It is a parser and a validator
+and nothing more; what a policy will do (replication, promotion, sequence numbers)
+is written in `sandbox-mint/DESIGN.md`, "AIR storage requirements". If it grows
+beyond that, it should move out of this crate. The note, nonce, blinded output and mint input/output
 types are mint-core's (`mint_types`); sp-wire depends on that crate at its
 release tag and re-exports them, so there is one definition. It does not depend
 on `mint-core` or `mint-server`.
