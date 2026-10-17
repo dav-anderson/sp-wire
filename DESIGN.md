@@ -13,7 +13,7 @@ exactly the same way, and sp-wire is the one crate all four already depend on
 (mint-core is not ours to change). It is not wire: no byte of it travels, it does
 no I/O, and it does not affect `WIRE_VERSION`. It is a parser and a validator
 and nothing more; what a policy will do (replication, promotion, sequence numbers)
-is written in `sandbox-mint/DESIGN.md`, "AIR storage requirements". If it grows
+is for the mints and the wallet to build on this type: copies kept on a primary and at least one secondary, only the mint promoting a secondary, sequence numbers on writes. None of it is here. If it grows
 beyond that, it should move out of this crate. The note, nonce, blinded output and mint input/output
 types are mint-core's (`mint_types`); sp-wire depends on that crate at its
 release tag and re-exports them, so there is one definition. It does not depend

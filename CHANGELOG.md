@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+Documentation only; no code and no wire change. The `storage` module comment and DESIGN.md describe the planned storage behaviour in place, not by a pointer to a file outside this repository.
+
 ## 0.4.0
 
 No byte on the wire changes, and `WIRE_VERSION` stays 2.

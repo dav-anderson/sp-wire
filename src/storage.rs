@@ -39,8 +39,9 @@
 //! limit is a sanity check and can be raised.
 //!
 //! The planned behaviour of a policy (replication, promotion, sequence numbers)
-//! is written in `sandbox-mint/DESIGN.md`, "AIR storage requirements". None of it
-//! is built here.
+//! is for the mints and the wallet to build on this type (copies on a primary and
+//! at least one secondary, only the mint promoting a secondary, sequence numbers
+//! on writes). None of it is built here.
 
 use std::fmt;
 use std::str::FromStr;
