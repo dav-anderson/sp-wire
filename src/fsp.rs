@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 
 use mint_types::{MintInput, MintOutput, Note};
-use secp256k1::{PublicKey, SecretKey, XOnlyPublicKey};
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub use crate::keyset::{KeysetWindow, RotationResponse};
+use crate::service::ServiceDid;
 
 /// The default for the longest spend memo, in bytes. A mint's `spend.max_memo_bytes`
 /// setting decides; `GET /fees` serves the value in force.
@@ -39,7 +40,8 @@ pub struct IssueGroup {
 /// `POST /issue`: ESP named for this service in, FSP out.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueRequest {
-    pub service: XOnlyPublicKey,
+    /// The service: its AIR DID (33 bytes).
+    pub service: ServiceDid,
     pub groups: Vec<IssueGroup>,
 }
 
@@ -181,7 +183,7 @@ pub struct SpendResponse {
 /// `GET /keys`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeysResponse {
-    pub service: Option<XOnlyPublicKey>,
+    pub service: Option<ServiceDid>,
     pub current: String,
     pub previous: Option<String>,
     /// For each live keyset, the public key for each amount.

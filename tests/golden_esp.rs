@@ -4,7 +4,8 @@
 
 use mint_types::{Amount, BlindNonce, MintInput, MintOutput, Nonce, Note};
 use secp256k1::schnorr::Signature;
-use secp256k1::{Keypair, PublicKey, SECP256K1, XOnlyPublicKey};
+use secp256k1::{Keypair, PublicKey, SECP256K1};
+use sp_wire::ServiceDid;
 use sp_wire::esp::exchange::{self, ExchangeRequest, ExchangeResponse};
 use sp_wire::esp::queue::{EntryView, SignedOutput, Status};
 use sp_wire::esp::redeem::{
@@ -45,11 +46,8 @@ fn key(n: u8) -> PublicKey {
         .public_key()
 }
 
-fn xonly(n: u8) -> XOnlyPublicKey {
-    Keypair::from_seckey_slice(SECP256K1, &[n; 32])
-        .unwrap()
-        .x_only_public_key()
-        .0
+fn did(n: u8) -> ServiceDid {
+    ServiceDid::from(key(n))
 }
 
 fn sig(n: u8) -> Signature {
@@ -82,7 +80,7 @@ const DAY: u64 = 20_500;
 
 fn redeem_input(n: u8) -> RedeemInput {
     RedeemInput {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: DAY,
         keyset: "0102030405060708".into(),
         input: input(4, n),
@@ -91,7 +89,7 @@ fn redeem_input(n: u8) -> RedeemInput {
 
 fn redeem_output(n: u8) -> RedeemOutput {
     RedeemOutput {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: DAY,
         output: output(2, n),
     }
@@ -99,7 +97,7 @@ fn redeem_output(n: u8) -> RedeemOutput {
 
 fn redeem_request() -> RedeemRequest {
     RedeemRequest {
-        service: xonly(1),
+        service: did(1),
         output_keyset: "2122232425262728".into(),
         inputs: vec![redeem_input(10), redeem_input(12)],
         memo: "payout".into(),
@@ -129,16 +127,16 @@ fn the_esp_wire_bytes_are_unchanged() {
     );
     line("SECONDS_PER_DAY", sp_wire::esp::terms::SECONDS_PER_DAY);
 
-    // Terms: the service key and the day, 40 bytes.
+    // Terms: the service DID and the day, 41 bytes.
     let terms = Terms {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: DAY,
     };
     line("Terms_bytes", hex::encode(terms.to_bytes()));
 
     // Exchange.
     let exchange_request = ExchangeRequest {
-        service: xonly(1),
+        service: did(1),
         psp_inputs: vec![input(4, 30), input(1, 32)],
         psp_input_keysets: vec!["0102030405060708".into(), "1112131415161718".into()],
         keyset: "2122232425262728".into(),
@@ -157,7 +155,7 @@ fn the_esp_wire_bytes_are_unchanged() {
         "ExchangeResponse",
         &ExchangeResponse {
             keyset: "2122232425262728".into(),
-            service: xonly(1),
+            service: did(1),
             redeemable_after_day: DAY,
             signatures: vec![key(50), key(51)],
             keys: vec![key(52), key(53)],
@@ -169,7 +167,7 @@ fn the_esp_wire_bytes_are_unchanged() {
 
     // Transfer.
     let transfer_request = TransferRequest {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: DAY,
         input_keysets: vec!["0102030405060708".into()],
         inputs: vec![input(4, 60)],
@@ -228,7 +226,7 @@ fn the_esp_wire_bytes_are_unchanged() {
         size_bytes: 119,
         fee_per_byte: 1_000_000,
         accepted_by_terms: vec![TermsTotal {
-            service: xonly(1),
+            service: did(1),
             redeemable_after_day: DAY,
             esp: 4_000_000_000_000,
         }],
@@ -276,7 +274,7 @@ fn the_esp_wire_bytes_are_unchanged() {
 
     // Rollover.
     let rollover = RolloverRequest {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: DAY,
         input_keysets: vec!["0102030405060708".into(), "1112131415161718".into()],
         inputs: vec![input(4, 90), input(2, 92)],
@@ -291,7 +289,7 @@ fn the_esp_wire_bytes_are_unchanged() {
         &RolloverResponse {
             keyset: "2122232425262728".into(),
             epoch: 3,
-            service: xonly(1),
+            service: did(1),
             redeemable_after_day: DAY,
             signatures: vec![key(110), key(111)],
             keys: vec![key(112), key(113)],

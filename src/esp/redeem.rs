@@ -8,33 +8,35 @@
 use std::fmt;
 
 use mint_types::{Amount, BlindNonce, MintInput, MintOutput, Nonce, Note};
+use secp256k1::PublicKey;
 use secp256k1::schnorr::Signature;
-use secp256k1::{PublicKey, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::queue::{EntryView, SignedOutput};
-use super::terms::Terms;
+use super::terms::{TERMS_BYTES, Terms};
 use crate::dec;
 use crate::keyset::is_keyset_id;
+use crate::service::ServiceDid;
 
-/// The first byte of every encoded request.
-pub const FORMAT_VERSION: u8 = 2;
+/// The first byte of every encoded request. Version 3 carries each service as
+/// its 33-byte AIR DID; version 2 carried the 32-byte x-only key and is refused.
+pub const FORMAT_VERSION: u8 = 3;
 
 /// Bytes of one keyset ID on the wire.
 pub const KEYSET_BYTES: u64 = 8;
 
-/// Bytes of one encoded input: service 32, day 8, keyset 8, amount 8, nonce 33,
+/// Bytes of one encoded input: service 33, day 8, keyset 8, amount 8, nonce 33,
 /// note signature 33, spend signature 64.
-pub const INPUT_BYTES: u64 = 186;
+pub const INPUT_BYTES: u64 = 187;
 
-/// Bytes of one encoded output: service 32, day 8, amount 8, blind nonce 33.
-pub const OUTPUT_BYTES: u64 = 81;
+/// Bytes of one encoded output: service 33, day 8, amount 8, blind nonce 33.
+pub const OUTPUT_BYTES: u64 = 82;
 
 /// Bytes of an encoded request that do not depend on its contents: version 1,
-/// service 32, output keyset 8, three list counts of 4, memo length 2, service
+/// service 33, output keyset 8, three list counts of 4, memo length 2, service
 /// signature 64.
-pub const FIXED_BYTES: u64 = 119;
+pub const FIXED_BYTES: u64 = 120;
 
 /// The smallest possible request: one note, a memo of one byte.
 pub const MIN_REQUEST_BYTES: u64 = FIXED_BYTES + INPUT_BYTES + 1;
@@ -49,7 +51,7 @@ const REQUEST_TAG: &[u8] = b"esp-mint/redeem-request/v2";
 /// An ESP note the service presents, with the terms it claims for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RedeemInput {
-    pub service: XOnlyPublicKey,
+    pub service: ServiceDid,
     pub redeemable_after_day: u64,
     /// The keyset that signed the note (16 hex characters). The note is
     /// checked, and looked up in the spent list, of this keyset.
@@ -62,15 +64,15 @@ pub struct RedeemInput {
 /// A fresh blinded output, tagged with the terms it is to be signed under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RedeemOutput {
-    pub service: XOnlyPublicKey,
+    pub service: ServiceDid,
     pub redeemable_after_day: u64,
     pub output: MintOutput,
 }
 
 #[derive(Debug, Clone)]
 pub struct RedeemRequest {
-    /// The service redeeming (its DID key, x-only).
-    pub service: XOnlyPublicKey,
+    /// The service redeeming (its AIR DID, 33 bytes).
+    pub service: ServiceDid,
     /// The keyset to sign the refund and decline outputs with (16 hex
     /// characters): the current or the previous one. A set that is not live is
     /// refused (`keyset_retired`, `unknown_keyset`). A decline signed later is
@@ -122,7 +124,7 @@ impl RedeemRequest {
 
 /// The length of the canonical encoding of a request with this many inputs, this
 /// many memo bytes and this many decline and refund outputs. Every other field
-/// has a fixed size, so this is exact: `119 + 186 * inputs + memo + 81 *
+/// has a fixed size, so this is exact: `120 + 187 * inputs + memo + 82 *
 /// (decline + refund)`.
 pub fn encoded_len(inputs: usize, memo_bytes: usize, decline: usize, refund: usize) -> u64 {
     FIXED_BYTES
@@ -131,7 +133,7 @@ pub fn encoded_len(inputs: usize, memo_bytes: usize, decline: usize, refund: usi
         + OUTPUT_BYTES * (decline as u64 + refund as u64)
 }
 
-fn terms_bytes(service: &XOnlyPublicKey, day: u64) -> [u8; 40] {
+fn terms_bytes(service: &ServiceDid, day: u64) -> [u8; TERMS_BYTES] {
     Terms {
         service: *service,
         redeemable_after_day: day,
@@ -153,25 +155,26 @@ fn keyset_bytes(id: &str) -> [u8; 8] {
 /// signature) only if `spend_signatures` is true.
 ///
 /// ```text
-/// version        1   (= 2)
-/// service       32   x-only key
+/// version        1   (= 3)
+/// service       33   the service's AIR DID (compressed key)
 /// output keyset  8   the keyset for the refund and decline outputs
 /// input count    4   big endian
-/// each input   186   service 32, day 8, keyset 8, amount 8, nonce 33,
+/// each input   187   service 33, day 8, keyset 8, amount 8, nonce 33,
 ///                    note signature 33, [spend signature 64]
 /// memo length    2   big endian
 /// memo           n   UTF-8
 /// decline count  4
-/// each output   81   service 32, day 8, amount 8, blind nonce 33
+/// each output   82   service 33, day 8, amount 8, blind nonce 33
 /// refund count   4
-/// each output   81
+/// each output   82
 /// [service signature 64]
 /// ```
 ///
-/// Integers are big endian, keys are compressed (33 bytes) or x-only (32).
+/// Integers are big endian, and every key, the service's DID included, is a
+/// compressed 33-byte key.
 #[allow(clippy::too_many_arguments)]
 fn write_body(
-    service: &XOnlyPublicKey,
+    service: &ServiceDid,
     output_keyset: &str,
     inputs: &[RedeemInput],
     memo: &str,
@@ -212,7 +215,7 @@ fn write_body(
 /// spend signatures and the service signature. The memo and the terms of every
 /// input and output are in it.
 pub fn digest(
-    service: &XOnlyPublicKey,
+    service: &ServiceDid,
     output_keyset: &str,
     inputs: &[RedeemInput],
     memo: &str,
@@ -306,9 +309,9 @@ impl<'a> Reader<'a> {
         Ok(u32::from_be_bytes(raw))
     }
 
-    fn service(&mut self, what: &str) -> Result<XOnlyPublicKey, String> {
-        XOnlyPublicKey::from_slice(self.take(32, what)?)
-            .map_err(|_| format!("{what} is not a valid x-only key"))
+    fn service(&mut self, what: &str) -> Result<ServiceDid, String> {
+        ServiceDid::from_slice(self.take(33, what)?)
+            .map_err(|_| format!("{what} is not a valid service DID (a 33-byte compressed key)"))
     }
 
     fn point(&mut self, what: &str) -> Result<PublicKey, String> {
@@ -361,7 +364,13 @@ pub fn decode_with(bytes: &[u8], max_memo_bytes: usize) -> Result<RedeemRequest,
     let mut r = Reader { bytes, at: 0 };
     let version = r.take(1, "the version")?[0];
     if version == 1 {
-        return Err("version 1 requests name no keysets; rebuild the request in version 2".into());
+        return Err("version 1 requests name no keysets; rebuild the request in version 3".into());
+    }
+    if version == 2 {
+        return Err(
+            "version 2 requests name each service by a 32-byte x-only key; rebuild the request in version 3 with the service's 33-byte AIR DID"
+                .into(),
+        );
     }
     if version != FORMAT_VERSION {
         return Err(format!("unknown request version {version}"));
@@ -473,7 +482,7 @@ pub struct NoteResult {
 /// An amount for one service and one day.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TermsTotal {
-    pub service: XOnlyPublicKey,
+    pub service: ServiceDid,
     pub redeemable_after_day: u64,
     #[serde(with = "dec")]
     pub esp: u128,

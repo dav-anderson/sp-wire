@@ -23,8 +23,9 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `fsp` | `IssueRequest`/`Response`, `SpendRequest`/`Response`, `KeysResponse`, `FeesResponse`, `Refusal` |
 | `codes` | the `code` of an error body: `keyset_retired`, `unknown_keyset`, `keyset_not_current` (reserved: no mint sends it), `burn_not_proven`, `note_spent_elsewhere`, ... |
 | `dec` | a `u128` as a decimal string in JSON |
+| `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
-| `storage` | not wire: the storage policy (an ordered list of service IDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
+| `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
 (`mint_types`). sp-wire depends on that crate at its release tag and re-exports
@@ -37,7 +38,7 @@ hash.
 
 ## wire_version
 
-`WIRE_VERSION` is a single integer, currently 2. Every mint's `GET /health`
+`WIRE_VERSION` is a single integer, currently 3. Every mint's `GET /health`
 returns it as `wire_version`, and a wallet refuses a mint whose number is not its
 own, with an error that names both (`version::check_health`).
 

@@ -14,7 +14,7 @@
 //! the environment it is one string with the IDs separated by commas:
 //!
 //! ```text
-//! PSP_STORAGE_MINT_STATE=79be...1798,c604...9ee5
+//! PSP_STORAGE_MINT_STATE=0279be...1798,02c604...9ee5
 //! ```
 //!
 //! - **One entry** is valid: one service holds the data, and the mint or wallet
@@ -25,13 +25,14 @@
 //!
 //! # A service ID
 //!
-//! A service ID is the service's 32-byte x-only public key, written as 64 hex
-//! characters (the same form as `fsp-mint`'s `service.did` and the wallet's
-//! `--service`). A 33-byte compressed DID key (66 hex characters, starting `02`
-//! or `03`) is accepted too and reduced to its x-only key, because the two name
-//! the same service. IDs are stored and printed as 64 lower-case hex characters,
-//! so the same service written two ways is one service (and a duplicate if listed
-//! twice). The key must be a valid curve point.
+//! A service ID is the service's AIR DID: the 33-byte compressed public key,
+//! written as 66 hex characters starting `02` or `03` ([`ServiceDid`], the same
+//! form as `fsp-mint`'s `service.did` and the wallet's `--service`). There is one
+//! form and no conversion: a 64-character (x-only) ID, the form of wire version 2,
+//! is refused with a reason. IDs are stored and printed as 66 lower-case hex
+//! characters, so the same DID written in upper case or with spaces is one
+//! service (and a duplicate if listed twice). The key must be a valid curve
+//! point. The same x coordinate with `02` and with `03` are two services.
 //!
 //! # Limits
 //!
@@ -46,104 +47,20 @@
 use std::fmt;
 use std::str::FromStr;
 
-use secp256k1::{PublicKey, XOnlyPublicKey};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+pub use crate::service::DidError;
+use crate::service::ServiceDid;
 
 /// The most services one policy may list.
 pub const MAX_SERVICES: usize = 8;
 
-/// A service's ID: its 32-byte x-only public key.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ServiceId([u8; 32]);
-
-impl ServiceId {
-    /// Parse 64 hex characters (x-only key) or 66 (compressed DID key).
-    pub fn parse(text: &str) -> Result<ServiceId, StorageError> {
-        let text = text.trim();
-        if !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(StorageError::NotHex(text.to_string()));
-        }
-        if text.len() != 64 && text.len() != 66 {
-            return Err(StorageError::BadLength(text.len()));
-        }
-        let bytes = hex::decode(text).map_err(|_| StorageError::NotHex(text.to_string()))?;
-        let x_only = match bytes.len() {
-            32 => XOnlyPublicKey::from_slice(&bytes)
-                .map_err(|_| StorageError::NotAKey(text.to_string()))?,
-            33 => {
-                PublicKey::from_slice(&bytes)
-                    .map_err(|_| StorageError::NotAKey(text.to_string()))?
-                    .x_only_public_key()
-                    .0
-            }
-            _ => return Err(StorageError::BadLength(text.len())),
-        };
-        Ok(ServiceId(x_only.serialize()))
-    }
-
-    /// The 32 bytes of the x-only key.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    /// The key itself.
-    pub fn x_only(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from_slice(&self.0).expect("checked when the ID was made")
-    }
-
-    /// The 64-character lower-case hex form.
-    pub fn to_hex(&self) -> String {
-        hex::encode(self.0)
-    }
-}
-
-impl From<XOnlyPublicKey> for ServiceId {
-    fn from(key: XOnlyPublicKey) -> Self {
-        ServiceId(key.serialize())
-    }
-}
-
-impl fmt::Display for ServiceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.to_hex())
-    }
-}
-
-impl fmt::Debug for ServiceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ServiceId({})", self.to_hex())
-    }
-}
-
-impl FromStr for ServiceId {
-    type Err = StorageError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        ServiceId::parse(s)
-    }
-}
-
-impl Serialize for ServiceId {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_hex())
-    }
-}
-
-impl<'de> Deserialize<'de> for ServiceId {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(d)?;
-        ServiceId::parse(&text).map_err(serde::de::Error::custom)
-    }
-}
-
 /// Why a service ID or a list of them was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageError {
-    /// Not hexadecimal.
-    NotHex(String),
-    /// Neither 64 nor 66 characters. Holds the length found.
-    BadLength(usize),
-    /// The right length but not a valid key.
-    NotAKey(String),
+    /// An entry is not a service ID (not hex, the wrong length, the old x-only
+    /// form, or not a key). The reason is the [`DidError`].
+    BadId(DidError),
     /// An empty entry in the list. Holds its 1-based position.
     EmptyEntry(usize),
     /// A service listed twice. Holds its ID.
@@ -154,15 +71,16 @@ pub enum StorageError {
     UnknownKind(String),
 }
 
+impl From<DidError> for StorageError {
+    fn from(e: DidError) -> Self {
+        StorageError::BadId(e)
+    }
+}
+
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StorageError::NotHex(s) => write!(f, "`{s}` is not a service ID: it must be hex"),
-            StorageError::BadLength(n) => write!(
-                f,
-                "a service ID is 64 hex characters (a 32-byte x-only key) or 66 (a 33-byte DID key), not {n}"
-            ),
-            StorageError::NotAKey(s) => write!(f, "`{s}` is not a valid public key"),
+            StorageError::BadId(e) => write!(f, "{e}"),
             StorageError::EmptyEntry(n) => write!(
                 f,
                 "entry {n} of the service list is empty (check for a doubled or trailing comma)"
@@ -250,12 +168,12 @@ impl fmt::Display for Redundancy {
 /// An ordered list of service IDs for one kind of data: index 0 is the primary.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StoragePolicy {
-    services: Vec<ServiceId>,
+    services: Vec<ServiceDid>,
 }
 
 impl StoragePolicy {
     /// A policy from IDs already parsed. Refuses duplicates and too many.
-    pub fn new(services: Vec<ServiceId>) -> Result<StoragePolicy, StorageError> {
+    pub fn new(services: Vec<ServiceDid>) -> Result<StoragePolicy, StorageError> {
         if services.len() > MAX_SERVICES {
             return Err(StorageError::TooMany(services.len()));
         }
@@ -278,23 +196,23 @@ impl StoragePolicy {
             if item.trim().is_empty() {
                 return Err(StorageError::EmptyEntry(i + 1));
             }
-            services.push(ServiceId::parse(item)?);
+            services.push(ServiceDid::parse(item)?);
         }
         StoragePolicy::new(services)
     }
 
     /// Every service, primary first.
-    pub fn services(&self) -> &[ServiceId] {
+    pub fn services(&self) -> &[ServiceDid] {
         &self.services
     }
 
     /// The primary: index 0, if any.
-    pub fn primary(&self) -> Option<&ServiceId> {
+    pub fn primary(&self) -> Option<&ServiceDid> {
         self.services.first()
     }
 
     /// The secondaries, in promotion order.
-    pub fn secondaries(&self) -> &[ServiceId] {
+    pub fn secondaries(&self) -> &[ServiceDid] {
         self.services.get(1..).unwrap_or(&[])
     }
 
@@ -304,7 +222,7 @@ impl StoragePolicy {
     }
 
     /// Whether `id` is in the list, as primary or secondary.
-    pub fn contains(&self, id: &ServiceId) -> bool {
+    pub fn contains(&self, id: &ServiceDid) -> bool {
         self.services.contains(id)
     }
 
@@ -317,12 +235,12 @@ impl StoragePolicy {
         }
     }
 
-    /// The setting as it is written: the IDs, comma-separated, in 64-character
+    /// The setting as it is written: the IDs, comma-separated, in 66-character
     /// lower-case hex. Empty for local only. `parse` of this gives the same policy.
     pub fn to_config_string(&self) -> String {
         self.services
             .iter()
-            .map(ServiceId::to_hex)
+            .map(ServiceDid::to_hex)
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -369,7 +287,7 @@ impl Serialize for StoragePolicy {
 
 impl<'de> Deserialize<'de> for StoragePolicy {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let services = Vec::<ServiceId>::deserialize(d)?;
+        let services = Vec::<ServiceDid>::deserialize(d)?;
         StoragePolicy::new(services).map_err(serde::de::Error::custom)
     }
 }
@@ -378,50 +296,45 @@ impl<'de> Deserialize<'de> for StoragePolicy {
 mod tests {
     use super::*;
 
-    /// x-only keys of G, 2G and 3G.
-    const G: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    const G2: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
-    const G3: &str = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+    /// The DIDs of G, 2G and 3G (the x coordinate with `02`: G, 2G and 3G all
+    /// have an even y).
+    const G: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const G2: &str = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const G3: &str = "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+    /// The x-only form of G, the old ID.
+    const G_X: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
     #[test]
-    fn a_service_id_is_an_x_only_key_or_a_did_key_reduced_to_one() {
-        let a = ServiceId::parse(G).unwrap();
+    fn an_entry_is_a_service_did() {
+        let a = ServiceDid::parse(G).unwrap();
         assert_eq!(a.to_hex(), G);
-        assert_eq!(a.to_string(), G);
-        // The 33-byte DID key of the same service, either parity.
-        assert_eq!(ServiceId::parse(&format!("02{G}")).unwrap(), a);
-        assert_eq!(ServiceId::parse(&format!("03{G}")).unwrap(), a);
-        // Upper case and spaces are forgiven and written back normalised.
-        assert_eq!(
-            ServiceId::parse(&format!("  {}\n", G.to_uppercase())).unwrap(),
-            a
-        );
-        assert_eq!(a.x_only().serialize(), *a.as_bytes());
-        assert_eq!(ServiceId::from(a.x_only()), a);
-        assert_eq!(G.parse::<ServiceId>().unwrap(), a);
+        let p = StoragePolicy::parse(&format!("  {}\n", G.to_uppercase())).unwrap();
+        assert_eq!(p.primary(), Some(&a));
+        assert_eq!(p.to_config_string(), G);
     }
 
     #[test]
-    fn a_bad_service_id_is_refused_with_the_reason() {
+    fn a_bad_entry_is_refused_with_the_reason() {
         assert_eq!(
-            ServiceId::parse("xyz"),
-            Err(StorageError::NotHex("xyz".into()))
+            StoragePolicy::parse("xyz"),
+            Err(StorageError::BadId(DidError::NotHex("xyz".into())))
         );
-        assert_eq!(ServiceId::parse(""), Err(StorageError::BadLength(0)));
-        assert_eq!(ServiceId::parse(&G[..62]), Err(StorageError::BadLength(62)));
-        // 33 bytes, but the first is not a key prefix.
-        let long = format!("{G}00");
-        assert_eq!(ServiceId::parse(&long), Err(StorageError::NotAKey(long)));
-        // The right length but not a point on the curve.
-        let off = "ff".repeat(32);
-        assert_eq!(ServiceId::parse(&off), Err(StorageError::NotAKey(off)));
-        // A 33-byte key with a prefix that is not 02 or 03.
-        let bad = format!("05{G}");
-        assert_eq!(ServiceId::parse(&bad), Err(StorageError::NotAKey(bad)));
+        assert_eq!(
+            StoragePolicy::parse(&G[..62]),
+            Err(StorageError::BadId(DidError::BadLength(62)))
+        );
+        // The old x-only form is refused, and the message says what changed.
+        let e = StoragePolicy::parse(G_X).unwrap_err();
+        assert_eq!(e, StorageError::BadId(DidError::XOnly(G_X.into())));
+        assert!(e.to_string().contains("x-only"), "{e}");
+        // Neither is it accepted as a second entry.
+        assert!(matches!(
+            StoragePolicy::parse(&format!("{G},{G_X}")),
+            Err(StorageError::BadId(DidError::XOnly(_)))
+        ));
+        assert!(StoragePolicy::parse(&format!("05{G_X}")).is_err());
         for e in [
-            StorageError::NotHex("x".into()),
-            StorageError::BadLength(3),
-            StorageError::NotAKey("x".into()),
+            StorageError::BadId(DidError::NotAKey("x".into())),
             StorageError::EmptyEntry(2),
             StorageError::Duplicate("x".into()),
             StorageError::TooMany(9),
@@ -434,12 +347,12 @@ mod tests {
     #[test]
     fn a_policy_keeps_the_order_and_index_0_is_the_primary() {
         let p = StoragePolicy::parse(&format!("{G2}, {G},{G3}")).unwrap();
-        let hexes: Vec<String> = p.services().iter().map(ServiceId::to_hex).collect();
+        let hexes: Vec<String> = p.services().iter().map(ServiceDid::to_hex).collect();
         assert_eq!(hexes, vec![G2, G, G3]);
         assert_eq!(p.primary().unwrap().to_hex(), G2);
         assert_eq!(p.secondaries().len(), 2);
         assert_eq!(p.secondaries()[0].to_hex(), G);
-        assert!(p.contains(&ServiceId::parse(G3).unwrap()));
+        assert!(p.contains(&ServiceDid::parse(G3).unwrap()));
         assert!(!p.is_local_only());
         assert_eq!(p.redundancy(), Redundancy::Replicated);
         // Written back normalised, and that parses to the same policy.
@@ -488,20 +401,29 @@ mod tests {
             StoragePolicy::parse(&format!(",{G}")),
             Err(StorageError::EmptyEntry(1))
         );
-        // The same service twice, even written two ways.
+        // The same DID twice, even written in upper case.
         assert_eq!(
-            StoragePolicy::parse(&format!("{G},{G2},02{G}")),
+            StoragePolicy::parse(&format!("{G},{G2},{}", G.to_uppercase())),
             Err(StorageError::Duplicate(G.into()))
+        );
+        // The same x coordinate with the other parity byte is another service.
+        let odd = format!("03{}", &G[2..]);
+        assert_eq!(
+            StoragePolicy::parse(&format!("{G},{odd}"))
+                .unwrap()
+                .services()
+                .len(),
+            2
         );
         // A bad entry is refused, naming it.
         assert!(matches!(
             StoragePolicy::parse(&format!("{G},nope")),
-            Err(StorageError::NotHex(s)) if s == "nope"
+            Err(StorageError::BadId(DidError::NotHex(s))) if s == "nope"
         ));
         // The limit is checked on the list. Nine entries (repeating the three
         // known keys) are too many before duplicates are looked at.
-        let known = [G, G2, G3].map(|s| ServiceId::parse(s).unwrap());
-        let nine: Vec<ServiceId> = (0..=MAX_SERVICES).map(|i| known[i % 3]).collect();
+        let known = [G, G2, G3].map(|s| ServiceDid::parse(s).unwrap());
+        let nine: Vec<ServiceDid> = (0..=MAX_SERVICES).map(|i| known[i % 3]).collect();
         assert_eq!(
             StoragePolicy::new(nine),
             Err(StorageError::TooMany(MAX_SERVICES + 1))
@@ -538,6 +460,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<StoragePolicy>(&json).unwrap(), p);
         assert!(serde_json::from_str::<StoragePolicy>(&format!("[\"{G}\",\"{G}\"]")).is_err());
         assert!(serde_json::from_str::<StoragePolicy>("[\"nope\"]").is_err());
+        assert!(serde_json::from_str::<StoragePolicy>(&format!("[\"{G_X}\"]")).is_err());
         assert_eq!(
             serde_json::from_str::<StoragePolicy>("[]").unwrap(),
             StoragePolicy::default()

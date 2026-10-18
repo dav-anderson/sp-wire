@@ -12,6 +12,7 @@
 //! - [`payload`] and [`seal`]: the PSP OP_RETURN payload and its encryption.
 //! - [`psp`], [`esp`] and [`fsp`]: the request and response bodies of each mint.
 //! - [`codes`]: the `code` of an error body.
+//! - [`service`]: [`ServiceDid`], the service ID: an AIR DID, 33 bytes, 66 hex characters.
 //! - [`version`]: [`WIRE_VERSION`] and the check a wallet makes against `/health`.
 //! - [`storage`]: the storage policy (an ordered list of service IDs per kind of
 //!   data), its parser and its checks. Not part of the wire.
@@ -31,10 +32,12 @@ pub mod keyset;
 pub mod payload;
 pub mod psp;
 pub mod seal;
+pub mod service;
 pub mod storage;
 pub mod units;
 pub mod version;
 
 pub use mint_types;
 pub use mint_types::{Amount, BlindNonce, MintInput, MintOutput, MintOutputOutcome, Nonce, Note};
+pub use service::ServiceDid;
 pub use version::WIRE_VERSION;

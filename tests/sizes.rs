@@ -5,7 +5,7 @@
 
 use mint_types::{Amount, BlindNonce, MintInput, MintOutput, Nonce, Note};
 use secp256k1::schnorr::Signature;
-use secp256k1::{Keypair, PublicKey, SECP256K1, XOnlyPublicKey};
+use secp256k1::{Keypair, PublicKey, SECP256K1};
 use sp_wire::esp::redeem::{
     self, FIXED_BYTES, FORMAT_VERSION, INPUT_BYTES, KEYSET_BYTES, MIN_REQUEST_BYTES, OUTPUT_BYTES,
     RedeemInput, RedeemOutput, RedeemRequest,
@@ -14,6 +14,7 @@ use sp_wire::esp::terms::Terms;
 use sp_wire::fsp;
 use sp_wire::keyset::{KEYSET_HEX_LEN, KEYSET_LEN, is_keyset_id, keyset_id};
 use sp_wire::payload::{self, DID_LEN, Payload};
+use sp_wire::service::ServiceDid;
 use sp_wire::units::{ESP_PER_PSP, ESP_PER_USD, MAX_PSP_DENOMINATION, MAX_PSP_PER_NOTE};
 
 fn key(n: u8) -> PublicKey {
@@ -22,11 +23,9 @@ fn key(n: u8) -> PublicKey {
         .public_key()
 }
 
-fn xonly(n: u8) -> XOnlyPublicKey {
-    Keypair::from_seckey_slice(SECP256K1, &[n; 32])
-        .unwrap()
-        .x_only_public_key()
-        .0
+/// The DID of the key `[n; 32]`: its 33-byte compressed public key.
+fn did(n: u8) -> ServiceDid {
+    ServiceDid::from(key(n))
 }
 
 fn output(units: u64, n: u8) -> MintOutput {
@@ -38,7 +37,7 @@ fn output(units: u64, n: u8) -> MintOutput {
 
 fn redeem_input(n: u8) -> RedeemInput {
     RedeemInput {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: 20_500,
         keyset: "0102030405060708".into(),
         input: MintInput {
@@ -54,7 +53,7 @@ fn redeem_input(n: u8) -> RedeemInput {
 
 fn redeem_output(n: u8) -> RedeemOutput {
     RedeemOutput {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: 20_500,
         output: output(2, n),
     }
@@ -62,7 +61,7 @@ fn redeem_output(n: u8) -> RedeemOutput {
 
 fn request(inputs: usize, memo: &str, decline: usize, refund: usize) -> RedeemRequest {
     RedeemRequest {
-        service: xonly(1),
+        service: did(1),
         output_keyset: "2122232425262728".into(),
         inputs: (0..inputs)
             .map(|i| redeem_input(10 + 2 * i as u8))
@@ -75,14 +74,15 @@ fn request(inputs: usize, memo: &str, decline: usize, refund: usize) -> RedeemRe
 }
 
 #[test]
-fn the_wire_version_is_two() {
-    assert_eq!(sp_wire::WIRE_VERSION, 2);
+fn the_wire_version_is_three() {
+    assert_eq!(sp_wire::WIRE_VERSION, 3);
 }
 
 #[test]
-fn a_point_is_33_bytes_and_a_service_key_32() {
+fn a_point_is_33_bytes_and_so_is_a_service_id() {
     assert_eq!(key(1).serialize().len(), 33);
-    assert_eq!(xonly(1).serialize().len(), 32);
+    assert_eq!(did(1).serialize().len(), 33);
+    assert_eq!(did(1).serialize(), key(1).serialize());
     assert_eq!(DID_LEN, 33);
 }
 
@@ -118,10 +118,10 @@ fn a_payload_is_35_bytes_plus_41_for_each_output_and_8_for_a_keyset() {
 }
 
 #[test]
-fn a_redeem_request_is_119_plus_186_81_and_the_memo() {
-    assert_eq!(FORMAT_VERSION, 2);
-    assert_eq!((FIXED_BYTES, INPUT_BYTES, OUTPUT_BYTES), (119, 186, 81));
-    assert_eq!(MIN_REQUEST_BYTES, 119 + 186 + 1);
+fn a_redeem_request_is_120_plus_187_82_and_the_memo() {
+    assert_eq!(FORMAT_VERSION, 3);
+    assert_eq!((FIXED_BYTES, INPUT_BYTES, OUTPUT_BYTES), (120, 187, 82));
+    assert_eq!(MIN_REQUEST_BYTES, 120 + 187 + 1);
     for (inputs, memo, decline, refund) in [
         (0, "", 0, 0),
         (1, "a", 0, 0),
@@ -131,7 +131,7 @@ fn a_redeem_request_is_119_plus_186_81_and_the_memo() {
         let r = request(inputs, memo, decline, refund);
         let bytes = redeem::encode(&r);
         let expected =
-            119 + 186 * inputs as u64 + memo.len() as u64 + 81 * (decline + refund) as u64;
+            120 + 187 * inputs as u64 + memo.len() as u64 + 82 * (decline + refund) as u64;
         assert_eq!(bytes.len() as u64, expected);
         assert_eq!(r.encoded_len(), expected);
         assert_eq!(
@@ -143,11 +143,11 @@ fn a_redeem_request_is_119_plus_186_81_and_the_memo() {
 }
 
 #[test]
-fn one_input_adds_186_bytes_and_one_output_81() {
+fn one_input_adds_187_bytes_and_one_output_82() {
     let base = redeem::encode(&request(1, "m", 0, 0)).len();
-    assert_eq!(redeem::encode(&request(2, "m", 0, 0)).len() - base, 186);
-    assert_eq!(redeem::encode(&request(1, "m", 1, 0)).len() - base, 81);
-    assert_eq!(redeem::encode(&request(1, "m", 0, 1)).len() - base, 81);
+    assert_eq!(redeem::encode(&request(2, "m", 0, 0)).len() - base, 187);
+    assert_eq!(redeem::encode(&request(1, "m", 1, 0)).len() - base, 82);
+    assert_eq!(redeem::encode(&request(1, "m", 0, 1)).len() - base, 82);
 }
 
 #[test]
@@ -172,12 +172,12 @@ fn the_redeem_encoding_reads_back_and_a_hash_is_64_hex() {
 }
 
 #[test]
-fn terms_are_40_bytes() {
+fn terms_are_41_bytes() {
     let t = Terms {
-        service: xonly(1),
+        service: did(1),
         redeemable_after_day: 20_500,
     };
-    assert_eq!(t.to_bytes().len(), 40);
+    assert_eq!(t.to_bytes().len(), 41);
 }
 
 #[test]

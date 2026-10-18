@@ -3,13 +3,13 @@
 //! `POST /transfer`: ESP notes for new ESP notes, signed by their service.
 
 use mint_types::{MintInput, MintOutput};
-use secp256k1::XOnlyPublicKey;
 use secp256k1::schnorr::Signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::exchange::ExchangeResponse;
 use super::terms::Terms;
+use crate::service::ServiceDid;
 
 const DIGEST_TAG: &[u8] = b"esp-mint/transfer/v1";
 const REQUEST_TAG: &[u8] = b"esp-mint/transfer-request/v2";
@@ -35,9 +35,9 @@ pub mod hex_signature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferRequest {
-    /// The service that holds the notes and asks for the swap (its DID key,
-    /// x-only). It is also the service every new note names.
-    pub service: XOnlyPublicKey,
+    /// The service that holds the notes and asks for the swap (its AIR DID, 33
+    /// bytes). It is also the service every new note names.
+    pub service: ServiceDid,
     /// The redeemable-after day of the notes. One request covers one set of
     /// terms, and the new notes keep this day.
     pub redeemable_after_day: u64,
@@ -71,12 +71,12 @@ impl TransferRequest {
 
 /// What the service and every input sign:
 /// `SHA-256("esp-mint/transfer/v1" || terms || the inputs || the outputs)`.
-/// The terms are the service and the redeemable-after day (40 bytes). Each input
+/// The terms are the service's DID and the redeemable-after day (41 bytes). Each input
 /// is its amount and its nonce, and each output is its amount and its blind
 /// nonce, with a count in front of each list. The spend signatures themselves are
 /// not part of it.
 pub fn digest(
-    service: &XOnlyPublicKey,
+    service: &ServiceDid,
     redeemable_after_day: u64,
     inputs: &[MintInput],
     outputs: &[MintOutput],

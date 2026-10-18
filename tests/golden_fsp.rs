@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 
 use mint_types::{Amount, BlindNonce, MintInput, MintOutput, Nonce, Note};
 use secp256k1::schnorr::Signature;
-use secp256k1::{Keypair, PublicKey, SECP256K1, SecretKey, XOnlyPublicKey};
+use secp256k1::{Keypair, PublicKey, SECP256K1, SecretKey};
+use sp_wire::ServiceDid;
 use sp_wire::fsp::{
     self as api, FeesResponse, FspInput, GroupResult, HandedEsp, IssueGroup, IssueRequest,
     IssueResponse, KeysResponse, KeysetWindow, Refusal, RotationResponse, SpendRequest,
@@ -43,8 +44,8 @@ fn key(n: u8) -> PublicKey {
     pair(n).public_key()
 }
 
-fn xonly(n: u8) -> XOnlyPublicKey {
-    pair(n).x_only_public_key().0
+fn did(n: u8) -> ServiceDid {
+    ServiceDid::from(key(n))
 }
 
 fn sig(n: u8) -> Signature {
@@ -97,7 +98,7 @@ fn the_fsp_wire_bytes_are_unchanged() {
         keyset: "0102030405060708".into(),
     };
     let issue = IssueRequest {
-        service: xonly(1),
+        service: did(1),
         groups: vec![
             IssueGroup {
                 redeemable_after_day: 20_500,
@@ -170,7 +171,7 @@ fn the_fsp_wire_bytes_are_unchanged() {
     json(
         "KeysResponse",
         &KeysResponse {
-            service: Some(xonly(1)),
+            service: Some(did(1)),
             current: "0102030405060708".into(),
             previous: None,
             keysets,

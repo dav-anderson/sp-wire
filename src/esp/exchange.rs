@@ -3,11 +3,12 @@
 //! `POST /exchange`: PSP notes for ESP notes.
 
 use mint_types::{MintInput, MintOutput};
-use secp256k1::{PublicKey, XOnlyPublicKey};
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::dec;
+use crate::service::ServiceDid;
 
 /// The default for the most inputs, and the most outputs, in one request
 /// (`exchange.max_items` and `transfer.max_items`).
@@ -18,8 +19,8 @@ const REQUEST_TAG: &[u8] = b"esp-mint/exchange-request/v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExchangeRequest {
-    /// The service that alone may redeem the new notes (its DID key, x-only).
-    pub service: XOnlyPublicKey,
+    /// The service that alone may redeem the new notes (its AIR DID, 33 bytes).
+    pub service: ServiceDid,
     /// PSP notes, each with a spend signature over the memo's melt digest.
     pub psp_inputs: Vec<MintInput>,
     /// The PSP keyset of each note, in order. Forwarded to the PSP's `/melt`,
@@ -40,7 +41,7 @@ pub struct ExchangeResponse {
     /// (`keys`) and records it. Empty in a reply stored before keysets.
     #[serde(default)]
     pub keyset: String,
-    pub service: XOnlyPublicKey,
+    pub service: ServiceDid,
     pub redeemable_after_day: u64,
     /// One blind signature per output, in the request's order.
     pub signatures: Vec<PublicKey>,
@@ -62,7 +63,7 @@ pub struct ExchangeResponse {
 
 /// The memo the PSP burn is bound to:
 /// `hex(SHA-256("esp-mint/exchange/v1" || service || each output's amount and blind nonce))`.
-pub fn memo(service: &XOnlyPublicKey, outputs: &[MintOutput]) -> String {
+pub fn memo(service: &ServiceDid, outputs: &[MintOutput]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(MEMO_TAG);
     hasher.update(service.serialize());

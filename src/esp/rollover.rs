@@ -3,8 +3,10 @@
 //! `POST /rollover` of the ESP mint: notes in, new notes of the same amounts out.
 
 use mint_types::{MintInput, MintOutput, transaction_sighash};
-use secp256k1::{PublicKey, XOnlyPublicKey};
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
+
+use crate::service::ServiceDid;
 
 pub const MAX_ROLLOVER_NOTES: usize = 1000;
 
@@ -15,7 +17,7 @@ pub const MAX_ROLLOVER_NOTES: usize = 1000;
 /// because nothing moves to anyone and nothing is split.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RolloverRequest {
-    pub service: XOnlyPublicKey,
+    pub service: ServiceDid,
     pub redeemable_after_day: u64,
     /// The keyset of each input, in order.
     #[serde(default)]
@@ -50,7 +52,7 @@ impl RolloverRequest {
 pub struct RolloverResponse {
     pub keyset: String,
     pub epoch: u64,
-    pub service: XOnlyPublicKey,
+    pub service: ServiceDid,
     pub redeemable_after_day: u64,
     pub signatures: Vec<PublicKey>,
     pub keys: Vec<PublicKey>,

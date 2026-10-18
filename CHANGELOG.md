@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.4.1 (unreleased)
+## 0.5.0 (unreleased)
+
+**`WIRE_VERSION` is 3** (it was 2). Every service ID is the 33-byte AIR DID, 66 hex characters, in place of the 32-byte x-only key, so the bytes of ESP terms, the redeem encoding and every hash that covers a service change. There is no migration and no dual format: a version 2 peer is refused by `check_health`, and a 64-character ID is refused with a message that says to use the DID. The reason is that AIR names a service by its DID, and the x-only form drops the parity byte.
+
+- **New module `service`:** `ServiceDid` (33 bytes; `parse`, `from_slice`, `serialize`, `to_hex`, `public_key`, `x_only`; `Display`, `FromStr`, `From<PublicKey>`; serde as a 66-character hex string), and `DidError` (`NotHex`, `BadLength`, `XOnly`, `NotAKey`). `x_only()` is for signing and checking a BIP340 signature only, and is never an ID.
+- **Every `XOnlyPublicKey` that meant a service is a `ServiceDid`:** `esp::terms::Terms`, `esp::exchange`, `esp::transfer`, `esp::rollover`, `esp::redeem` (inputs, outputs, totals and the request), `fsp::IssueRequest.service` and `fsp::KeysResponse.service`.
+- **`storage::ServiceId` is removed** in favour of `ServiceDid`; `StoragePolicy` holds `ServiceDid`s and no longer reduces a 33-byte key to 32. `StorageError::BadId` carries a `DidError`.
+- **Sizes:** `esp::terms::TERMS_BYTES` (new) is 41, not 40. The redeem encoding is `FORMAT_VERSION` 3: `FIXED_BYTES` 120, `INPUT_BYTES` 187, `OUTPUT_BYTES` 82, `MIN_REQUEST_BYTES` 308. A version 1 or version 2 request is refused with its own message.
+- **Goldens:** `tests/golden/esp.txt` and `fsp.txt` are changed on exactly the lines that carry a service ID (the terms, the exchange memo and hashes, the transfer, redeem and rollover digests and hashes, the redeem encoding and its size constants, the `service` field of the JSON, the issue request hash). The new values were computed with an independent model of the hashes, which was first checked to reproduce the version 2 lines it replaces; `tests/golden/psp.txt` is unchanged. `tests/sizes.rs` is changed to the new sizes.
+- Domain-separation tags (`esp-mint/transfer/v1`, `esp-mint/redeem/v2`, ...) are unchanged: the version of the whole wire is `WIRE_VERSION`.
+- Everything in 0.4.1, below, is part of this release.
+
+## 0.4.1
 
 AIR 2.1.0 (commit `741b1cf`, `master`, 16 Oct 2026) replaces AIR 2.0.3. No byte on the wire changes, `WIRE_VERSION` stays 2, and the public API of `seal` is the same: `encrypt`, `decrypt`, `parse_public_key`, `OVERHEAD`, `SealError`, `PublicKey` and `SecretKey` keep their names, signatures and behaviour.
 
@@ -15,7 +27,7 @@ AIR 2.1.0 (commit `741b1cf`, `master`, 16 Oct 2026) replaces AIR 2.0.3. No byte 
 
 No byte on the wire changes, and `WIRE_VERSION` stays 2.
 
-- New module `storage`: `ServiceId` (a 32-byte x-only key, 64 hex characters; a 33-byte DID key is reduced to it), `StoragePolicy` (an ordered list of service IDs, index 0 the primary, at most 8, no duplicates, no empty entry; empty is local only, one entry has a local backup), `DataKind` (`mint_state`, `wallet`, `app`, with the setting keys `storage.<kind>`), `Redundancy` and `StorageError`. `StoragePolicy::parse` reads the comma-separated form used in the environment, and the serde form is a JSON list of hex strings. It is the one parser and validator the three mints and the wallet use for their storage settings. Config only: nothing in it reads or writes the AIR or a file.
+- New module `storage`: `ServiceId` (a 32-byte x-only key, 64 hex characters; a 33-byte DID key is reduced to it; replaced by `ServiceDid` in 0.5.0), `StoragePolicy` (an ordered list of service IDs, index 0 the primary, at most 8, no duplicates, no empty entry; empty is local only, one entry has a local backup), `DataKind` (`mint_state`, `wallet`, `app`, with the setting keys `storage.<kind>`), `Redundancy` and `StorageError`. `StoragePolicy::parse` reads the comma-separated form used in the environment, and the serde form is a JSON list of hex strings. It is the one parser and validator the three mints and the wallet use for their storage settings. Config only: nothing in it reads or writes the AIR or a file.
 - Tests: the unit tests in `src/storage.rs` (both ID forms, the order and primary, one and none, empty entries, duplicates written two ways, the limit, the kinds, JSON).
 
 ## 0.3.0

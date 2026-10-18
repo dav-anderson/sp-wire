@@ -12,7 +12,14 @@ use std::fmt;
 /// - 2: the sealed payload moved to AIR 2.0.3's encryption (sp-wire 0.2.0): the
 ///   raw sender key, tag and ciphertext, 80 bytes of overhead, in place of the
 ///   `postcard` encoding of AIR 1.1.0's `Encrypted`. Nothing else changed.
-pub const WIRE_VERSION: u32 = 2;
+/// - 3: a service ID is its 33-byte AIR DID (sp-wire 0.5.0), where it was the
+///   32-byte x-only key. It changes the ESP terms (41 bytes, not 40) and with
+///   them the ESP key derivation, the exchange memo, the transfer, rollover and
+///   redeem digests and request hashes, the redemption encoding (its format
+///   version is 3 and every service is 33 bytes), the FSP issue hash, and every
+///   JSON body that names a service (66 hex characters, not 64). The mint-info
+///   request of the AIR integration rides this version too.
+pub const WIRE_VERSION: u32 = 3;
 
 /// A mint speaks another wire version than this build.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,8 +71,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_wire_version_is_two() {
-        assert_eq!(WIRE_VERSION, 2);
+    fn the_wire_version_is_three() {
+        assert_eq!(WIRE_VERSION, 3);
     }
 
     #[test]
@@ -80,12 +87,15 @@ mod tests {
     fn another_version_is_refused_and_says_both() {
         // a mint still on version 1 (the old seal format)
         let e = check_health(&json!({"wire_version": 1})).unwrap_err();
-        assert_eq!(e, WireMismatch::Different { mint: 1, ours: 2 });
+        assert_eq!(e, WireMismatch::Different { mint: 1, ours: 3 });
         let text = e.to_string();
         assert!(
-            text.contains("wire version 1") && text.contains("speaks 2"),
+            text.contains("wire version 1") && text.contains("speaks 3"),
             "{text}"
         );
+        // a mint still on version 2 (the 32-byte x-only service ID)
+        let e = check_health(&json!({"wire_version": 2})).unwrap_err();
+        assert_eq!(e, WireMismatch::Different { mint: 2, ours: 3 });
     }
 
     #[test]
@@ -97,7 +107,7 @@ mod tests {
         ] {
             assert_eq!(
                 check_health(&body),
-                Err(WireMismatch::Missing { ours: 2 }),
+                Err(WireMismatch::Missing { ours: 3 }),
                 "{body}"
             );
         }

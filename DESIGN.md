@@ -33,7 +33,36 @@ wallet would sign over a different request than the mint hashes.
 The goldens in `tests/golden/*.txt` were captured from the v0.1.0 mints before
 this crate existed, so that moving the types out of the mints provably changed no
 byte. They are the specification. The only lines that have moved since are the
-sealed-payload ones (wire version 2, below).
+sealed-payload ones (wire version 2, below) and the ones that carry a service ID
+(wire version 3, below).
+
+## The service ID (wire version 3)
+
+A service ID is the 33-byte compressed AIR DID of the service, 66 hex characters
+starting `02` or `03`: `service::ServiceDid`. It is the one type for it. Through
+wire version 2 it was the 32-byte x-only key (64 hex characters), which loses the
+parity byte; the DID of an AIR service has it, and the AIR name of a service is
+that DID, so the ID is now the DID and nothing is reduced.
+
+- **Where it appears.** In ESP terms (`Terms`, 41 bytes: the DID and the
+  redeemable-after day), in the ESP exchange, transfer, rollover and redeem
+  requests and replies, in the redeem encoding (`FORMAT_VERSION` 3), in the FSP
+  issue request and the `GET /keys` reply, and in the storage policy lists. Every
+  hash and digest that covers a service covers its 33 bytes. The domain-separation
+  tags (`esp-mint/transfer/v1`, ...) are unchanged.
+- **The parity byte is part of the ID.** `02<x>` and `03<x>` are two different
+  IDs that share one x-only key. Both parse, and a mint holding one refuses the
+  other as a wrong service.
+- **Signing.** A BIP340 signature is made and checked against the x-only key,
+  which is `ServiceDid::x_only()`. That conversion stays in the signing code and is
+  never an ID.
+- **No migration.** There is no dual format. A 64-character (x-only) ID is
+  refused with a message that says so (`DidError::XOnly`), a version 2 redeem
+  request is refused with its own message, and `check_health` refuses a mint on
+  another wire version.
+- **Sizes.** A redeem request grows by one byte per service in it: fixed part 119 to
+  120, input 186 to 187, output 81 to 82. The fees are 0 in the family today, so no
+  amount changes; the fee-sized length does, by those bytes.
 
 ## The seal and AIR
 
