@@ -1,8 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (unreleased)
 
-Documentation only; no code and no wire change. The `storage` module comment and DESIGN.md describe the planned storage behaviour in place, not by a pointer to a file outside this repository.
+AIR 2.1.0 (commit `741b1cf`, `master`, 16 Oct 2026) replaces AIR 2.0.3. No byte on the wire changes, `WIRE_VERSION` stays 2, and the public API of `seal` is the same: `encrypt`, `decrypt`, `parse_public_key`, `OVERHEAD`, `SealError`, `PublicKey` and `SecretKey` keep their names, signatures and behaviour.
+
+- **What moved in AIR.** Its `names` module is now private, so `air::names::secp256k1::{PublicKey, SecretKey}` no longer compiles; `seal` takes both from the crate root, `air::{PublicKey, SecretKey}`. Between 2.0.3 and 2.1.0 the cipher code (`PublicKey::encrypt`, `SecretKey::decrypt`, the ElligatorSwift exchange and ChaCha20-Poly1305) is unchanged: the only edit to AIR's `secp256k1.rs` is that `to_array` and `to_vec` take `self` instead of `&self`, which changes nothing for these Copy types. The sealed bytes are therefore the same, and the existing decrypt-only golden (`tests/golden/psp.txt`, `seal_sealed` opened with `seal_secret_json`) opens without being recaptured. `tests/` is not changed. AIR's websocket, server, client and note modules moved to a separate crate, `air_server`, and its `stream` feature is gone, so the dependency tree is smaller than with 2.0.3.
+- **AIR 2.1.0 does not export `SecretKey`.** It re-exports `PublicKey` but not `SecretKey`, which appears in its public API only as the return type of `Secret::harden` and `Secret::public`, so nothing outside AIR can name it or build one from bytes. The `seal` module cannot work without it (`decrypt` takes one, and the mint's `mint_did_key.json` is a serialized one). A one-line change in AIR's `src/lib.rs` fixes it: `SecretKey` added to the existing `pub use names::secp256k1::{...}`. That change is made on a local branch of AIR (`export-secretkey`, `bdb0c85`, on top of 2.1.0) and is to be proposed upstream. No workaround type is defined here: an `air::Secret` wrapper would have changed what `sp_wire::seal::SecretKey` is, and how `psp-mint` stores and loads its key.
+- **Pin.** AIR is still pinned by commit (it has no tags), now to `741b1cf`. Until the export is merged upstream, building with `seal` needs the git-ignored patch in the README ("Features and dependencies") pointing at a checkout that has it. When it is merged, the pin moves to the merged commit and the patch goes; that is a change of the `rev` in `Cargo.toml` and nothing else.
+- **`rust-version` is 1.93** (it was 1.85), which is the compiler the family builds with now.
+- AIR 2.1.0 pins `secp256k1` 0.31.1 in its own `Cargo.lock`; this crate uses 0.30. The two sit side by side as before, and no type crosses between them.
+- Documentation: the `storage` module comment and DESIGN.md describe the planned storage behaviour in place, not by a pointer to a file outside this repository. README and DESIGN.md describe the AIR 2.1.0 pin and the export.
 
 ## 0.4.0
 

@@ -49,13 +49,26 @@ AIR 1.1.0 returned an `Encrypted(Init, Message)` struct that was stored as its
 version 1 sealed payload does not open under version 2, and the other way round,
 which is why the change is a wire version and not a patch. Nothing else moved.
 
+AIR 2.1.0 (sp-wire 0.4.1) changed no byte of this: the encrypt and decrypt code
+and the format are the same as in 2.0.3, so `WIRE_VERSION` stays 2 and the
+decrypt-only golden (a fixed sealed blob, its secret key as JSON and the public key
+as hex) opens as it did. What changed is where the types are: AIR's `names`
+module is private, and `PublicKey` is exported from the crate root while
+`SecretKey` is not. `seal` needs `SecretKey` (to open a payload, and to read the
+mint's `mint_did_key.json`), and it is the same type psp-mint and the wallet use
+through `sp_wire::seal`. A stand-in type would have been a different public type
+with its own key-file reader, so it was not written; the export is a one-word
+change in AIR (`SecretKey` next to `PublicKey` in `src/lib.rs`), made on a local
+branch of AIR and to be proposed upstream. Until it is merged the build needs a
+local patch (README), and the pin then moves to the merged commit.
+
 `PublicKey` Display and FromStr are the 33-byte compressed hex (66 characters),
 the same as the DID, so the published mint key and the DID in the payload did not
 change. The byte-array and serde forms of AIR's public key are the 64-byte
 ElligatorSwift form; sp-wire uses only Display, FromStr and `SecretKey`'s serde
 (a 32-byte hex string), so existing `mint_did_key.json` files still load.
 
-AIR 2.0.3 uses `secp256k1` 0.31 and this crate (like mint-core) uses 0.30. The two
-versions sit side by side and no type crosses between them: the DID keys are AIR's
-own types, and the rest of the wire is `secp256k1` 0.30. AIR's default feature
-`stream` must stay on (its websocket module uses it unconditionally).
+AIR (2.0.3 and 2.1.0) uses `secp256k1` 0.31 and this crate (like mint-core) uses
+0.30. The two versions sit side by side and no type crosses between them: the DID
+keys are AIR's own types, and the rest of the wire is `secp256k1` 0.30. AIR 2.0.3
+needed its default feature `stream` to stay on; 2.1.0 has no such feature.

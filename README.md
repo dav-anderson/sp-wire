@@ -61,9 +61,24 @@ need AIR. The sealed format and its sizes are available without it.
 
 Dependencies are by git tag, so a clone builds the code that was tested:
 `mint-types` at mint-core `v0.1.3`. With `seal`, AIR is pinned by commit
-(`8e281d5`, 2.0.3; AIR has no tags). It has no path dependency, so nothing needs
-patching. AIR uses `secp256k1` 0.31 and this crate 0.30; see
-[DESIGN.md](DESIGN.md) for why that is safe.
+(`741b1cf`, 2.1.0; AIR has no tags). AIR uses `secp256k1` 0.31 and this crate
+0.30; see [DESIGN.md](DESIGN.md) for why that is safe. The crate needs rustc 1.93
+or later.
+
+**AIR 2.1.0 does not export `SecretKey`, so `seal` does not build from `741b1cf`
+alone.** The fix is one word in AIR's `src/lib.rs` (`SecretKey` next to
+`PublicKey` in the `pub use names::secp256k1::{...}` line), made on the branch
+`export-secretkey` of a local AIR checkout and not yet in upstream. Until it is, put
+this in `.cargo/config.toml` in this folder (git-ignored; never commit it), with the
+path of that checkout:
+
+```toml
+[patch."https://github.com/ramp-stack/air"]
+air = { path = "/Users/you/air" }
+```
+
+When upstream has merged the export, the final pin is that merged commit: the
+`rev` in `Cargo.toml` moves to it and the patch is no longer needed.
 
 ## Build and test
 
@@ -78,6 +93,8 @@ and do not commit it:
 [patch."https://github.com/dav-anderson/mint-core.git"]
 mint-types = { path = "/Users/you/mint-core-v0.1.3/crates/mint-types" }
 ```
+
+(The AIR patch above goes in the same file for as long as it is needed.)
 
 The top-level README in `sandbox-mint` has the recipe across all repos and the
 `local-git.sh` script, which is the simpler way to test against unpushed tags.

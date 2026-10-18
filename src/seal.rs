@@ -1,6 +1,6 @@
 //! The OP_RETURN payload is encrypted to the mint's DID key.
 //!
-//! The cipher is AIR's (2.0.3), not a new scheme: `PublicKey::encrypt` seals
+//! The cipher is AIR's (2.0.3, and unchanged in 2.1.0), not a new scheme: `PublicKey::encrypt` seals
 //! bytes to a public key and `SecretKey::decrypt` opens them with the matching
 //! secret key. It does an ElligatorSwift key exchange and encrypts with
 //! ChaCha20-Poly1305, and a fresh sender key is made for every message.
@@ -23,7 +23,7 @@
 //! payload cannot be told from noise until the tag has failed or passed.
 //!
 //! The mint's own key is published as 33 bytes of compressed hex
-//! ([`parse_public_key`], the same as the DID key in the payload). AIR 2.0.3 keeps
+//! ([`parse_public_key`], the same as the DID key in the payload). AIR keeps
 //! that text form (`Display` and `FromStr`); its binary and serde form is the
 //! 64-byte ElligatorSwift one, which this crate never writes out.
 //!
@@ -65,8 +65,13 @@ impl fmt::Display for SealError {
 
 impl Error for SealError {}
 
+// AIR 2.1.0 (741b1cf) does not export `SecretKey`. The line below needs the AIR
+// commit that adds it next to `PublicKey` (branch `export-secretkey`, to be
+// proposed upstream); until then it builds with the patch in the README. When
+// upstream has merged it, the `rev` in Cargo.toml moves to the merged commit and
+// this note goes.
 #[cfg(feature = "seal")]
-pub use air::names::secp256k1::{PublicKey, SecretKey};
+pub use air::{PublicKey, SecretKey};
 
 /// Seal `plaintext` to the mint's DID public key. The result is
 /// `plaintext.len() + OVERHEAD` bytes.

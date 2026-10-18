@@ -1,8 +1,8 @@
 [package]
 name = "sp-wire"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.93"
 license = "MIT"
 description = "The wire types, encodings and constants shared by the Service Points mints and wallet"
 
@@ -19,9 +19,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4.3"
-# AIR has no tags, so it is pinned by commit: 2.0.3 on master (11 Oct 2026). Its
-# manifest has no path dependency, so it builds from git as it is.
-air = { git = "https://github.com/ramp-stack/air", rev = "8e281d585ef0280812c109f67e248d5579c1970e", optional = true }
+# AIR has no tags, so it is pinned by commit: 741b1cf, 2.1.0 on master (16 Oct
+# 2026). Its manifest has no path dependency, so it builds from git as it is,
+# except that 2.1.0 does not export `SecretKey` (see the README): until the
+# export is merged upstream and this rev is moved to the merged commit, build
+# with the git-ignored patch below pointing at a checkout that has the export.
+air = { git = "https://github.com/ramp-stack/air", rev = "741b1cf4ae633aebafcada4d812eb459566d0df7", optional = true }
 
 [dev-dependencies]
 secp256k1 = { version = "0.30", default-features = false, features = ["global-context", "serde"] }
@@ -32,4 +35,4 @@ secp256k1 = { version = "0.30", default-features = false, features = ["global-co
 # [patch."https://github.com/dav-anderson/mint-core.git"]
 # mint-types = { path = "../mint-core-v0.1.3/crates/mint-types" }
 # [patch."https://github.com/ramp-stack/air"]
-# air = { path = "../air" }   # only to try an unpushed change to AIR
+# air = { path = "../air" }   # a checkout of AIR with `SecretKey` exported; needed until upstream has it
