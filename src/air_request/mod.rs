@@ -1,9 +1,12 @@
 //! One read-only request from a wallet to a mint over AIR, and the mint's signed
-//! reply: the first call between two parties that does not go over HTTP.
+//! reply: the calls between two parties that do not go over HTTP.
 //!
-//! The call is **mint info**: what the mint's `GET /health` reports (`status`,
-//! `wire_version`, `network`), which is what a wallet's `verify_mint` reads before
-//! it sends anything else. The design, with the reasons for every choice, is
+//! The calls are **mint info** (what the mint's `GET /health` reports: `status`,
+//! `wire_version`, `network`, which a wallet's `verify_mint` reads before it
+//! sends anything else) and the PSP's **keys**, **keysets** and **rotation**
+//! (`GET /keys`, `/keysets`, `/rotation`). They share one request envelope with a
+//! kind byte, and the body of the reply is the exact JSON the HTTP call returns;
+//! REQUEST-DESIGN.md section 14 has the reasons. The design, with the reasons for every choice, is
 //! `REQUEST-DESIGN.md` in sandbox-mint (`air-sandbox/`); this module is that
 //! design, ported from the throwaway prototype that ran it (`mintinfo-proto`),
 //! with one change: the label of the reply cell and the label of the reply
@@ -64,8 +67,10 @@ use std::error::Error;
 use std::fmt;
 
 pub use envelope::{
-    Answer, Expect, KIND_MINT_INFO, MintInfo, VerifyError, WireReply, WireRequest,
-    answer_mint_info, build_reply, build_reply_naming, verify_receipt, verify_reply,
+    Answer, Expect, KIND_KEYS, KIND_KEYSETS, KIND_MINT_INFO, KIND_ROTATION, MintInfo,
+    STATUS_ANSWERED, STATUS_UNAVAILABLE, Served, VerifyError, WireReply, WireRequest,
+    answer_mint_info, answer_request, build_reply, build_reply_naming, check_mint_info,
+    verify_answer, verify_receipt, verify_reply,
 };
 
 /// Why `host` is not a host name or IP for the AIR server setting, if it is

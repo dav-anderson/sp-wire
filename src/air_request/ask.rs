@@ -1,6 +1,9 @@
-//! The wallet's side of the mint-info request: the whole flow of the design,
-//! shared so that the wallet and the integration tests of the mint run the same
-//! code (REQUEST-DESIGN.md sections 2, 3 and 6).
+//! The wallet's side of a request to the mint (mint info, keys, keysets,
+//! rotation): the whole flow of the design, shared so that the wallet and the
+//! integration tests of the mint run the same code (REQUEST-DESIGN.md sections
+//! 2, 3, 6 and 14). The flow is the same for every kind; [`ask`] returns the
+//! verified reply, and the caller reads the body (for mint info,
+//! [`ask_mint_info`] does).
 //!
 //! One request is one `request_id` and one one-off key `r`, kept by the caller
 //! ([`InFlight`]) and saved through the `save` callback *before* anything is
@@ -30,7 +33,9 @@ use tokio::sync::mpsc;
 use super::AirError;
 use super::addr::{self, MAX_SLOTS_PROBED};
 use super::client::{self, Client, Event, Put, ServerRef};
-use super::envelope::{Expect, MintInfo, VerifyError, WireReply, WireRequest, verify_reply};
+use super::envelope::{
+    KIND_MINT_INFO, MintInfo, VerifyError, WireReply, WireRequest, check_mint_info, verify_answer,
+};
 use crate::ServiceDid;
 use crate::seal::SecretKey;
 
@@ -56,6 +61,9 @@ pub struct AskConfig {
 /// The request in flight: kept by the caller until the request is answered.
 #[derive(Clone, Debug)]
 pub struct InFlight {
+    /// What is asked (`KIND_*`). Fixed for the life of the request: the retries
+    /// are the same request.
+    pub kind: u8,
     pub request_id: [u8; 32],
     /// The one-off secret key `r`; `R` is its public half.
     pub r: SecretKey,
@@ -64,9 +72,15 @@ pub struct InFlight {
 }
 
 impl InFlight {
-    /// A new request: a random id and a fresh one-off key.
+    /// A new mint-info request: a random id and a fresh one-off key.
     pub fn new() -> Self {
+        Self::of(KIND_MINT_INFO)
+    }
+
+    /// A new request of `kind`: a random id and a fresh one-off key.
+    pub fn of(kind: u8) -> Self {
         InFlight {
+            kind,
             request_id: addr::random_id(),
             r: SecretKey::new(),
             slots: vec![],
@@ -76,7 +90,11 @@ impl InFlight {
     /// The reply cell's address is derived from these two; this is the wire
     /// request they stand for.
     pub fn request(&self) -> WireRequest {
-        WireRequest::mint_info(self.request_id, addr::key_to_bytes(&self.r.public_key()))
+        WireRequest::new(
+            self.kind,
+            self.request_id,
+            addr::key_to_bytes(&self.r.public_key()),
+        )
     }
 }
 
@@ -86,7 +104,34 @@ impl Default for InFlight {
     }
 }
 
-/// A verified answer.
+/// A verified answer to a request of any kind: the mint, the signature, the
+/// request id and hash, the status and the age have been checked. The body is as
+/// the mint signed it; reading it is the caller's.
+#[derive(Clone, Debug)]
+pub struct Verified {
+    pub reply: WireReply,
+    /// The opened reply plaintext: the receipt. Anyone can verify it from the DID alone.
+    pub receipt: Vec<u8>,
+    pub request_id: [u8; 32],
+    pub slots: Vec<u32>,
+    /// 0 when the reply was already in its cell and no request was written.
+    pub attempts_used: u32,
+}
+
+impl Verified {
+    /// The signed body: the bytes the HTTP call would have returned.
+    pub fn body(&self) -> &[u8] {
+        &self.reply.body
+    }
+
+    /// The body read as JSON of type `T`. The error is a [`VerifyError::BadBody`]
+    /// (the mint signed something that is not what was asked for).
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, VerifyError> {
+        serde_json::from_slice(&self.reply.body).map_err(|e| VerifyError::BadBody(e.to_string()))
+    }
+}
+
+/// A verified answer to a mint-info request.
 #[derive(Clone, Debug)]
 pub struct Outcome {
     pub info: MintInfo,
@@ -168,22 +213,17 @@ fn finish(
     request: &WireRequest,
     sealed: &[u8],
     attempts_used: u32,
-) -> Result<Outcome, AskError> {
+) -> Result<Verified, AskError> {
     let plain = addr::open(&flight.r, sealed).map_err(|e| AskError::NotOpenable(e.0))?;
-    let (reply, info) = verify_reply(
+    let reply = verify_answer(
         &plain,
-        &Expect {
-            mint_did: &cfg.mint,
-            request,
-            wire_version: cfg.wire_version,
-            network: &cfg.network,
-            now: addr::now_secs(),
-            max_skew_secs: cfg.max_skew_secs,
-        },
+        &cfg.mint,
+        request,
+        addr::now_secs(),
+        cfg.max_skew_secs,
     )
     .map_err(AskError::Verify)?;
-    Ok(Outcome {
-        info,
+    Ok(Verified {
         reply,
         receipt: plain,
         request_id: flight.request_id,
@@ -192,16 +232,44 @@ fn finish(
     })
 }
 
-/// Ask the mint for its info, as described at the top of this module.
-/// `save` is called before the first write and after each write into the
-/// mailbox, with the request as it now stands; if it fails, the call fails (the
-/// caller could not keep the request, so a retry would not be safe).
+/// Ask the mint for its info, as described at the top of this module, and check
+/// the wire version and network against `cfg`. `flight` must be a mint-info
+/// request ([`InFlight::new`]).
 pub async fn ask_mint_info(
     client: &Client,
     cfg: &AskConfig,
     flight: &mut InFlight,
     save: &mut dyn FnMut(&InFlight) -> Result<(), String>,
 ) -> Result<Outcome, AskError> {
+    if flight.kind != KIND_MINT_INFO {
+        return Err(AskError::Other(format!(
+            "request kind {} is not mint info",
+            flight.kind
+        )));
+    }
+    let v = ask(client, cfg, flight, save).await?;
+    let info =
+        check_mint_info(&v.reply.body, cfg.wire_version, &cfg.network).map_err(AskError::Verify)?;
+    Ok(Outcome {
+        info,
+        reply: v.reply,
+        receipt: v.receipt,
+        request_id: v.request_id,
+        slots: v.slots,
+        attempts_used: v.attempts_used,
+    })
+}
+
+/// Ask the mint the question in `flight` (its kind), as described at the top of
+/// this module. `save` is called before the first write and after each write
+/// into the mailbox, with the request as it now stands; if it fails, the call
+/// fails (the caller could not keep the request, so a retry would not be safe).
+pub async fn ask(
+    client: &Client,
+    cfg: &AskConfig,
+    flight: &mut InFlight,
+    save: &mut dyn FnMut(&InFlight) -> Result<(), String>,
+) -> Result<Verified, AskError> {
     let mint_key = addr::did_to_key(&cfg.mint)?;
     let request = flight.request();
     let shared = addr::shared_wallet(&flight.r, &mint_key);

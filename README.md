@@ -25,7 +25,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
-| `air_request` | the mint-info request over AIR (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
+| `air_request` | the read-only requests over AIR, mint info and a PSP's keys, keysets and rotation (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
@@ -60,8 +60,8 @@ If one of them fails you changed the wire. If that was meant, bump
 
 `seal` (off by default) adds `encrypt`, `decrypt` and `parse_public_key`, which
 need AIR. The sealed format and its sizes are available without it.
-`air-request` (off by default, implies `seal`) adds the pure parts of the mint-info
-request over AIR, and `air-client` (implies `air-request`) adds its transport,
+`air-request` (off by default, implies `seal`) adds the pure parts of the read-only
+requests over AIR (mint info, keys, keysets, rotation), and `air-client` (implies `air-request`) adds its transport,
 which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
@@ -87,9 +87,15 @@ When upstream has merged the export, the final pin is that merged commit: the
 
 ## The AIR request
 
-`air_request` is the first call between a wallet and a mint that does not go over
+`air_request` carries the calls between a wallet and a mint that do not go over
 HTTP: the wallet asks for **mint info** (what `GET /health` reports: `status`,
-`wire_version`, `network`) and verifies a reply the mint signed with its DID key.
+`wire_version`, `network`) or a PSP's **keys**, **keysets** or **rotation** (what
+`GET /keys`, `/keysets` and `/rotation` return), and verifies a reply the mint
+signed with its DID key. All four are one request envelope with a kind byte
+(`KIND_MINT_INFO` 1, `KIND_KEYS` 2, `KIND_KEYSETS` 3, `KIND_ROTATION` 4), and the
+body of the reply is the exact JSON the HTTP route returns; a mint that cannot
+answer now says so in a signed reply (`STATUS_UNAVAILABLE`, no body). The kinds
+are additive: no bump.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
 request into a numbered mailbox of the mint's DID (anyone can write a slot, only
@@ -108,7 +114,9 @@ forge one. It rides `WIRE_VERSION` 3, with no bump.
 - **Feature `air-client`** (implies `air-request`; adds `air_server` and `tokio`):
   the thin transport (`client`: connect to a configured server name and host, raw
   `Create` and `Read`, held reads; no `orange_me` helper), the wallet's whole flow
-  (`ask::ask_mint_info`: read the reply cell first, write a request into the first
+  (`ask::ask` for any kind, which returns a `Verified` reply whose `json::<T>()`
+  reads the body; `ask::ask_mint_info` for mint info, which also checks the wire
+  version and network: read the reply cell first, write a request into the first
   free slot, wait, retry with the same `request_id` and `r`, verify), and
   `local_server`, an `air_server` started in the test process.
 - **Port 5702.** The AIR client always dials 5702 for `ws` (upstream item 12), so a

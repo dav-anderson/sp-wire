@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! request   version (1) | kind (1) | request_id (32) | R (33) | body_len (2) | body
-//!           sealed to the mint DID; 69 + 80 = 149 bytes for mint info
+//!           sealed to the mint DID; 69 + 80 = 149 bytes for any call that has no body
 //! reply     version (1) | status (1) | mint DID (33) | request_id (32) | request_hash (32)
 //!           | issued_at (8) | body_len (4) | body | signature (64)
 //!           sealed to R; the fixed part is 111 bytes, the signed bytes are reply[0 .. 111+n]
@@ -28,10 +28,20 @@ use crate::ServiceDid;
 
 /// The envelope's own version byte.
 pub const ENVELOPE_VERSION: u8 = 0;
-/// The request kind of mint info.
+/// The request kind of mint info (`GET /health`).
 pub const KIND_MINT_INFO: u8 = 1;
-/// The reply status of a request that was answered. Others are reserved.
+/// The request kind of the mint's current keys (`GET /keys`).
+pub const KIND_KEYS: u8 = 2;
+/// The request kind of the mint's keysets (`GET /keysets`).
+pub const KIND_KEYSETS: u8 = 3;
+/// The request kind of the mint's rotation window (`GET /rotation`).
+pub const KIND_ROTATION: u8 = 4;
+/// The reply status of a request that was answered. The body is what the HTTP
+/// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;
+/// The reply status of a request the mint understood but cannot answer now (the
+/// HTTP call would have failed). The body is empty. Signed like any reply.
+pub const STATUS_UNAVAILABLE: u8 = 1;
 /// Bytes of a request with an empty body.
 pub const REQUEST_FIXED: usize = 69;
 /// Bytes of a reply before its body.
@@ -52,14 +62,19 @@ pub struct WireRequest {
 }
 
 impl WireRequest {
-    /// A mint-info request: no body.
-    pub fn mint_info(request_id: [u8; 32], reply_key: [u8; 33]) -> Self {
+    /// A request of `kind` with no body: every call so far is a plain read.
+    pub fn new(kind: u8, request_id: [u8; 32], reply_key: [u8; 33]) -> Self {
         WireRequest {
-            kind: KIND_MINT_INFO,
+            kind,
             request_id,
             reply_key,
             body: vec![],
         }
+    }
+
+    /// A mint-info request: no body.
+    pub fn mint_info(request_id: [u8; 32], reply_key: [u8; 33]) -> Self {
+        Self::new(KIND_MINT_INFO, request_id, reply_key)
     }
 
     /// version (1) | kind (1) | request_id (32) | R (33) | body_len (2, BE) | body
@@ -253,6 +268,9 @@ impl fmt::Display for VerifyError {
             Self::BadSignature => write!(f, "signature does not verify under the mint DID"),
             Self::WrongRequestId => write!(f, "reply is for a different request id"),
             Self::WrongRequestHash => write!(f, "reply is for a different question (request hash)"),
+            Self::Refused(STATUS_UNAVAILABLE) => {
+                write!(f, "mint could not answer now (status {STATUS_UNAVAILABLE})")
+            }
             Self::Refused(s) => write!(f, "mint refused (status {s})"),
             Self::Stale { issued_at, now } => {
                 write!(f, "issued_at {issued_at} is too far from now {now}")
@@ -280,48 +298,79 @@ pub struct Expect<'a> {
     pub max_skew_secs: u64,
 }
 
-/// The wallet's checks on an opened reply (section 5). The signature is
-/// checked against the DID alone, with nothing but the 33 bytes and the reply.
-pub fn verify_reply(plain: &[u8], expect: &Expect) -> Result<(WireReply, MintInfo), VerifyError> {
+/// The checks on an opened reply that do not depend on what was asked (section
+/// 5): the mint, the signature, the request id and hash, the status and the
+/// age. The signature is checked against the DID alone, with nothing but the 33
+/// bytes and the reply. The body is the caller's to read: it is as signed.
+pub fn verify_answer(
+    plain: &[u8],
+    mint_did: &ServiceDid,
+    request: &WireRequest,
+    now: u64,
+    max_skew_secs: u64,
+) -> Result<WireReply, VerifyError> {
     let reply = WireReply::decode(plain).map_err(|e| VerifyError::Malformed(e.0))?;
-    if reply.mint_did != *expect.mint_did.as_bytes() {
+    if reply.mint_did != *mint_did.as_bytes() {
         return Err(VerifyError::WrongMint);
     }
-    let key = addr::did_to_key(expect.mint_did).map_err(|e| VerifyError::Malformed(e.0))?;
+    let key = addr::did_to_key(mint_did).map_err(|e| VerifyError::Malformed(e.0))?;
     let signature =
         addr::sig_from_bytes(&reply.signature).map_err(|e| VerifyError::Malformed(e.0))?;
     let signed = &plain[..plain.len() - SIGNATURE_BYTES];
     key.verify(&signature, Id::from(reply_digest(signed)))
         .map_err(|_| VerifyError::BadSignature)?;
-    if reply.request_id != expect.request.request_id {
+    if reply.request_id != request.request_id {
         return Err(VerifyError::WrongRequestId);
     }
-    if reply.request_hash != expect.request.hash() {
+    if reply.request_hash != request.hash() {
         return Err(VerifyError::WrongRequestHash);
     }
     if reply.status != STATUS_ANSWERED {
         return Err(VerifyError::Refused(reply.status));
     }
-    if reply.issued_at.abs_diff(expect.now) > expect.max_skew_secs {
+    if reply.issued_at.abs_diff(now) > max_skew_secs {
         return Err(VerifyError::Stale {
             issued_at: reply.issued_at,
-            now: expect.now,
+            now,
         });
     }
+    Ok(reply)
+}
+
+/// Read a mint-info body and check its wire version and network.
+pub fn check_mint_info(
+    body: &[u8],
+    wire_version: u32,
+    network: &str,
+) -> Result<MintInfo, VerifyError> {
     let info: MintInfo =
-        serde_json::from_slice(&reply.body).map_err(|e| VerifyError::BadBody(e.to_string()))?;
-    if info.wire_version != expect.wire_version {
+        serde_json::from_slice(body).map_err(|e| VerifyError::BadBody(e.to_string()))?;
+    if info.wire_version != wire_version {
         return Err(VerifyError::WireVersion {
             theirs: info.wire_version,
-            ours: expect.wire_version,
+            ours: wire_version,
         });
     }
-    if info.network != expect.network {
+    if info.network != network {
         return Err(VerifyError::Network {
             theirs: info.network,
-            ours: expect.network.to_string(),
+            ours: network.to_string(),
         });
     }
+    Ok(info)
+}
+
+/// The wallet's checks on the opened reply to a mint-info request: those of
+/// [`verify_answer`], then the body.
+pub fn verify_reply(plain: &[u8], expect: &Expect) -> Result<(WireReply, MintInfo), VerifyError> {
+    let reply = verify_answer(
+        plain,
+        expect.mint_did,
+        expect.request,
+        expect.now,
+        expect.max_skew_secs,
+    )?;
+    let info = check_mint_info(&reply.body, expect.wire_version, expect.network)?;
     Ok((reply, info))
 }
 
@@ -352,31 +401,56 @@ pub struct Answer {
     pub sealed_reply: Vec<u8>,
 }
 
-/// Open one sealed cell from a mailbox slot and answer it with `info`, or say
-/// why it is skipped (it does not open, is malformed, is of an unknown kind or
-/// names a key that is not one). Mint info is read-only, so junk changes no
-/// state.
+/// What the mint says to one kind of request.
+pub enum Served {
+    /// Answered: the reply body, which is what the HTTP call returns.
+    Body(Vec<u8>),
+    /// Understood, but cannot be answered now: a signed reply with status
+    /// [`STATUS_UNAVAILABLE`] and no body.
+    Unavailable,
+}
+
+/// Open one sealed cell from a mailbox slot and answer it, or say why it is
+/// skipped (it does not open, is malformed, is of a kind `serve` does not know
+/// or names a key that is not one). `serve` is called with the kind, and only
+/// once the request has opened and been decoded; it returns `None` for a kind it
+/// does not know. Every call is read-only, so junk changes no state.
+pub fn answer_request(
+    key: &SecretKey,
+    sealed: &[u8],
+    now: u64,
+    serve: &dyn Fn(u8) -> Option<Served>,
+) -> Result<Answer, AirError> {
+    let plain = addr::open(key, sealed)?;
+    let request = WireRequest::decode(&plain)?;
+    let r_key = addr::bytes_to_key(&request.reply_key)?;
+    let served =
+        serve(request.kind).ok_or_else(|| AirError(format!("unknown kind {}", request.kind)))?;
+    let (status, body) = match served {
+        Served::Body(body) => (STATUS_ANSWERED, body),
+        Served::Unavailable => (STATUS_UNAVAILABLE, Vec::new()),
+    };
+    let shared = addr::shared_mint(key, &r_key);
+    let reply_cell = addr::reply_secret(&shared, &request.request_id, 0);
+    let reply = build_reply(key, &request, status, now, &body);
+    let sealed_reply = addr::seal_to(&r_key, &reply)?;
+    Ok(Answer {
+        request,
+        reply_cell,
+        sealed_reply,
+    })
+}
+
+/// [`answer_request`] for a mint that serves only mint info.
 pub fn answer_mint_info(
     key: &SecretKey,
     info: &MintInfo,
     sealed: &[u8],
     now: u64,
 ) -> Result<Answer, AirError> {
-    let plain = addr::open(key, sealed)?;
-    let request = WireRequest::decode(&plain)?;
-    if request.kind != KIND_MINT_INFO {
-        return Err(AirError(format!("unknown kind {}", request.kind)));
-    }
-    let r_key = addr::bytes_to_key(&request.reply_key)?;
-    let shared = addr::shared_mint(key, &r_key);
-    let reply_cell = addr::reply_secret(&shared, &request.request_id, 0);
     let body = serde_json::to_vec(info).map_err(|e| AirError(e.to_string()))?;
-    let reply = build_reply(key, &request, STATUS_ANSWERED, now, &body);
-    let sealed_reply = addr::seal_to(&r_key, &reply)?;
-    Ok(Answer {
-        request,
-        reply_cell,
-        sealed_reply,
+    answer_request(key, sealed, now, &|kind| {
+        (kind == KIND_MINT_INFO).then(|| Served::Body(body.clone()))
     })
 }
 
@@ -436,6 +510,28 @@ mod tests {
             hex::encode(reply_digest(&signed)),
             "e867fc9107c1dd1fd2b7a2226d261695b2d382a098532d1bdad553dcfc3f70f1"
         );
+    }
+
+    #[test]
+    fn golden_request_hash_per_kind() {
+        // The same id and R, no body, one kind each; the kind is in the hash.
+        let (id, r) = (test_request().request_id, test_request().reply_key);
+        for (kind, want) in [
+            (
+                KIND_KEYS,
+                "662ea4e3881fdfdcca24f6b573a91852fc06579a279b1b185fe8b33c01d05fb2",
+            ),
+            (
+                KIND_KEYSETS,
+                "0795de9c7e0c27de08c117a44499971ff391c35ea4a4b5b023fa5776c52a1d39",
+            ),
+            (
+                KIND_ROTATION,
+                "9d1f4fca56d0fab365d195e5529384ab7bf3ed49704ffa32943a10b00e1e1d46",
+            ),
+        ] {
+            assert_eq!(hex::encode(WireRequest::new(kind, id, r).hash()), want);
+        }
     }
 
     // ---- envelopes
@@ -738,5 +834,116 @@ mod tests {
             first.reply_cell.public_key(),
             second.reply_cell.public_key()
         );
+    }
+
+    // ---- the generic request: keys, keysets, rotation
+
+    const KEYS_BODY: &[u8] = br#"{"keys":{"1":"02aa"}}"#;
+
+    fn serve_all(kind: u8) -> Option<Served> {
+        match kind {
+            KIND_KEYS | KIND_KEYSETS => Some(Served::Body(KEYS_BODY.to_vec())),
+            KIND_ROTATION => Some(Served::Unavailable),
+            _ => None,
+        }
+    }
+
+    fn asked(kind: u8, mint: &SecretKey, r: &SecretKey) -> (WireRequest, Vec<u8>) {
+        let request = WireRequest::new(kind, random_id(), key_to_bytes(&r.public_key()));
+        let sealed = seal_to(&mint.public_key(), &request.encode()).unwrap();
+        (request, sealed)
+    }
+
+    #[test]
+    fn each_kind_is_answered_with_its_body_and_checks_out() {
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        for kind in [KIND_KEYS, KIND_KEYSETS] {
+            let (request, sealed) = asked(kind, &mint, &r);
+            let answer = answer_request(&mint, &sealed, now_secs(), &serve_all).unwrap();
+            assert_eq!(answer.request, request);
+            let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+            let reply = verify_answer(&plain, &did, &request, now_secs(), 300).unwrap();
+            assert_eq!(
+                reply.body, KEYS_BODY,
+                "the body is carried as it was served"
+            );
+            assert_eq!(reply.status, STATUS_ANSWERED);
+        }
+    }
+
+    #[test]
+    fn unavailable_is_a_signed_reply_that_the_wallet_reads_as_refused() {
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        let (request, sealed) = asked(KIND_ROTATION, &mint, &r);
+        let answer = answer_request(&mint, &sealed, now_secs(), &serve_all).unwrap();
+        let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+        assert_eq!(
+            verify_answer(&plain, &did, &request, now_secs(), 300).unwrap_err(),
+            VerifyError::Refused(STATUS_UNAVAILABLE)
+        );
+        // It is signed and has no body, so it is a receipt like any other.
+        let reply = verify_receipt(&did, &plain).unwrap();
+        assert_eq!(reply.status, STATUS_UNAVAILABLE);
+        assert!(reply.body.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_kind_is_skipped_and_serve_is_not_asked_for_junk() {
+        let mint = SecretKey::new();
+        let r = SecretKey::new();
+        let (_, sealed) = asked(9, &mint, &r);
+        assert!(answer_request(&mint, &sealed, 0, &serve_all).is_err());
+        // Junk and a bad R never reach `serve`.
+        let never = |_: u8| -> Option<Served> { panic!("serve was called for junk") };
+        assert!(answer_request(&mint, &random_bytes(200), 0, &never).is_err());
+        let mut bad_r = test_request();
+        bad_r.kind = KIND_KEYS;
+        bad_r.reply_key = [0xff; 33];
+        let sealed = seal_to(&mint.public_key(), &bad_r.encode()).unwrap();
+        assert!(answer_request(&mint, &sealed, 0, &never).is_err());
+    }
+
+    #[test]
+    fn a_reply_to_one_kind_is_not_an_answer_to_another() {
+        // Same id and R: only the kind differs, and the kind is in the hash.
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        let (keys, sealed) = asked(KIND_KEYS, &mint, &r);
+        let answer = answer_request(&mint, &sealed, now_secs(), &serve_all).unwrap();
+        let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+        let mut keysets = keys.clone();
+        keysets.kind = KIND_KEYSETS;
+        assert_eq!(
+            verify_answer(&plain, &did, &keysets, now_secs(), 300).unwrap_err(),
+            VerifyError::WrongRequestHash
+        );
+    }
+
+    #[test]
+    fn a_tampered_keys_body_is_rejected() {
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        let (request, sealed) = asked(KIND_KEYS, &mint, &r);
+        let answer = answer_request(&mint, &sealed, now_secs(), &serve_all).unwrap();
+        let mut plain = addr::open(&r, &answer.sealed_reply).unwrap();
+        plain[REPLY_FIXED + 10] ^= 1;
+        assert_eq!(
+            verify_answer(&plain, &did, &request, now_secs(), 300).unwrap_err(),
+            VerifyError::BadSignature
+        );
+    }
+
+    #[test]
+    fn mint_info_still_answers_only_mint_info() {
+        let mint = SecretKey::new();
+        let r = SecretKey::new();
+        let (_, sealed) = asked(KIND_KEYS, &mint, &r);
+        assert!(answer_mint_info(&mint, &regtest_info(), &sealed, 0).is_err());
     }
 }

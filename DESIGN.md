@@ -64,7 +64,7 @@ that DID, so the ID is now the DID and nothing is reduced.
   120, input 186 to 187, output 81 to 82. The fees are 0 in the family today, so no
   amount changes; the fee-sized length does, by those bytes.
 
-## The AIR request (mint info)
+## The AIR request (mint info, keys, keysets, rotation)
 
 `air_request` carries one read-only question from a wallet to a mint over AIR and
 the mint's signed answer. The long form, with the alternatives that were rejected
@@ -93,7 +93,27 @@ matters for this crate:
 - **Test DID.** The goldens use the secp256k1 generator as the mint DID. The
   prototype's `02` plus repeated bytes is probably not a curve point, which
   `ServiceDid` refuses.
-- **Why the wallet's flow is here.** `ask::ask_mint_info` is the whole wallet side
+- **One envelope, a kind byte.** Mint info, keys, keysets and rotation are one
+  request envelope with a kind (`KIND_*`), not a type each: the kind is in the
+  request hash, so a reply to one question is not an answer to another with the
+  same id and key. The mint's side is `answer_request(key, sealed, now, serve)`,
+  where `serve` maps a kind to a body or to "cannot answer now" (or to `None`, an
+  unknown kind, which is skipped); `answer_mint_info` is the mint-info-only case.
+  The wallet's side is `ask::ask`, which checks everything that does not depend on
+  the question (`verify_answer`: mint, signature, request id and hash, status,
+  age) and leaves the body to the caller. This is additive, so no `WIRE_VERSION`
+  bump and no new envelope version: a mint that does not know a kind skips it, and
+  the wallet waits out its tries.
+- **The body is the HTTP body.** The reply body for keys, keysets and rotation is
+  the bytes the HTTP route returns, built by the same function in the mint, so the
+  wallet reads it with the types it already uses. The signature covers those bytes.
+- **Unavailable is signed.** A mint that understood the question and cannot answer
+  (its lock is poisoned, a rotation step failed: the HTTP route would be a 500)
+  signs a reply with `STATUS_UNAVAILABLE` and no body, so the wallet fails at once
+  with the reason instead of waiting out `attempts` tries of `reply_wait_secs`. It
+  is a status, not a body, because a body would have to be parsed as one of the
+  types.
+- **Why the wallet's flow is here.** `ask::ask` is the whole wallet side
   (it keeps `request_id` and `r` through a `save` callback before the first write,
   reads the reply cell before writing, retries with the same pair, verifies). It
   lives in this crate so that the wallet and the mints' integration tests run the
