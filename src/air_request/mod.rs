@@ -3,10 +3,13 @@
 //!
 //! The calls are **mint info** (what the mint's `GET /health` reports: `status`,
 //! `wire_version`, `network`, which a wallet's `verify_mint` reads before it
-//! sends anything else) and the PSP's **keys**, **keysets** and **rotation**
-//! (`GET /keys`, `/keysets`, `/rotation`). They share one request envelope with a
-//! kind byte, and the body of the reply is the exact JSON the HTTP call returns;
-//! REQUEST-DESIGN.md section 14 has the reasons. The design, with the reasons for every choice, is
+//! sends anything else), the PSP's **keys**, **keysets** and **rotation**
+//! (`GET /keys`, `/keysets`, `/rotation`) and the PSP's **rollover** and
+//! **check-state** (`POST /rollover`, `/check-state`: the first calls with a
+//! body, and the first that change state). They share one request envelope with
+//! a kind byte, and the body of the reply is the exact JSON the HTTP call
+//! returns; a refusal is a signed reply with its own status and the HTTP 4xx
+//! body. REQUEST-DESIGN.md sections 14 and 15 have the reasons. The design, with the reasons for every choice, is
 //! `REQUEST-DESIGN.md` in sandbox-mint (`air-sandbox/`); this module is that
 //! design, ported from the throwaway prototype that ran it (`mintinfo-proto`),
 //! with one change: the label of the reply cell and the label of the reply
@@ -67,10 +70,10 @@ use std::error::Error;
 use std::fmt;
 
 pub use envelope::{
-    Answer, Expect, KIND_KEYS, KIND_KEYSETS, KIND_MINT_INFO, KIND_ROTATION, MintInfo,
-    STATUS_ANSWERED, STATUS_UNAVAILABLE, Served, VerifyError, WireReply, WireRequest,
-    answer_mint_info, answer_request, build_reply, build_reply_naming, check_mint_info,
-    verify_answer, verify_receipt, verify_reply,
+    Answer, Expect, KIND_CHECK_STATE, KIND_KEYS, KIND_KEYSETS, KIND_MINT_INFO, KIND_ROLLOVER,
+    KIND_ROTATION, MintInfo, STATUS_ANSWERED, STATUS_REFUSED, STATUS_UNAVAILABLE, Served,
+    VerifyError, WireReply, WireRequest, answer_mint_info, answer_request, build_reply,
+    build_reply_naming, check_mint_info, verify_answer, verify_receipt, verify_reply,
 };
 
 /// Why `host` is not a host name or IP for the AIR server setting, if it is

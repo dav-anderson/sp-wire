@@ -25,7 +25,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
-| `air_request` | the read-only requests over AIR, mint info and a PSP's keys, keysets and rotation (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
+| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, and its rollover and check-state (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
@@ -61,7 +61,7 @@ If one of them fails you changed the wire. If that was meant, bump
 `seal` (off by default) adds `encrypt`, `decrypt` and `parse_public_key`, which
 need AIR. The sealed format and its sizes are available without it.
 `air-request` (off by default, implies `seal`) adds the pure parts of the read-only
-requests over AIR (mint info, keys, keysets, rotation), and `air-client` (implies `air-request`) adds its transport,
+requests over AIR (mint info, keys, keysets, rotation, rollover, check-state), and `air-client` (implies `air-request`) adds its transport,
 which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
@@ -90,12 +90,18 @@ When upstream has merged the export, the final pin is that merged commit: the
 `air_request` carries the calls between a wallet and a mint that do not go over
 HTTP: the wallet asks for **mint info** (what `GET /health` reports: `status`,
 `wire_version`, `network`) or a PSP's **keys**, **keysets** or **rotation** (what
-`GET /keys`, `/keysets` and `/rotation` return), and verifies a reply the mint
-signed with its DID key. All four are one request envelope with a kind byte
-(`KIND_MINT_INFO` 1, `KIND_KEYS` 2, `KIND_KEYSETS` 3, `KIND_ROTATION` 4), and the
-body of the reply is the exact JSON the HTTP route returns; a mint that cannot
-answer now says so in a signed reply (`STATUS_UNAVAILABLE`, no body). The kinds
-are additive: no bump.
+`GET /keys`, `/keysets` and `/rotation` return) or sends its **rollover** or
+**check-state** (`POST /rollover`, `/check-state`: the first calls with a request
+body, the first that change state), and verifies a reply the mint signed with its
+DID key. All six are one request envelope with a kind byte (`KIND_MINT_INFO` 1,
+`KIND_KEYS` 2, `KIND_KEYSETS` 3, `KIND_ROTATION` 4, `KIND_ROLLOVER` 5,
+`KIND_CHECK_STATE` 6), and the body of the reply is the exact JSON the HTTP route
+returns; a mint that cannot answer now says so in a signed reply
+(`STATUS_UNAVAILABLE`, no body), and one that refuses says so in a signed reply
+with the HTTP `4xx` body (`STATUS_REFUSED`). The request's `body_len` is 4 bytes (it
+was 2 until a rollover of 1000 notes, about half a megabyte, needed more; envelope
+version 0 is kept, since nothing that uses it was released). The kinds and the
+status are additive: no bump.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
 request into a numbered mailbox of the mint's DID (anyone can write a slot, only

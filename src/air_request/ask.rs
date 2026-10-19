@@ -1,5 +1,5 @@
 //! The wallet's side of a request to the mint (mint info, keys, keysets,
-//! rotation): the whole flow of the design, shared so that the wallet and the
+//! rotation, rollover, check-state): the whole flow of the design, shared so that the wallet and the
 //! integration tests of the mint run the same code (REQUEST-DESIGN.md sections
 //! 2, 3, 6 and 14). The flow is the same for every kind; [`ask`] returns the
 //! verified reply, and the caller reads the body (for mint info,
@@ -34,7 +34,8 @@ use super::AirError;
 use super::addr::{self, MAX_SLOTS_PROBED};
 use super::client::{self, Client, Event, Put, ServerRef};
 use super::envelope::{
-    KIND_MINT_INFO, MintInfo, VerifyError, WireReply, WireRequest, check_mint_info, verify_answer,
+    KIND_MINT_INFO, MintInfo, STATUS_REFUSED, VerifyError, WireReply, WireRequest, check_mint_info,
+    verify_answer,
 };
 use crate::ServiceDid;
 use crate::seal::SecretKey;
@@ -69,6 +70,10 @@ pub struct InFlight {
     pub r: SecretKey,
     /// The mailbox slots this request was written to, in order.
     pub slots: Vec<u32>,
+    /// The request body: empty for the reads, the request JSON for a call that
+    /// changes state. Fixed for the life of the request, like the kind: the
+    /// retries are the same request, so the same hash.
+    pub body: Vec<u8>,
 }
 
 impl InFlight {
@@ -79,22 +84,31 @@ impl InFlight {
 
     /// A new request of `kind`: a random id and a fresh one-off key.
     pub fn of(kind: u8) -> Self {
+        Self::with_body(kind, vec![])
+    }
+
+    /// A new request of `kind` with a body: a random id and a fresh one-off key.
+    pub fn with_body(kind: u8, body: Vec<u8>) -> Self {
         InFlight {
             kind,
             request_id: addr::random_id(),
             r: SecretKey::new(),
             slots: vec![],
+            body,
         }
     }
 
     /// The reply cell's address is derived from these two; this is the wire
     /// request they stand for.
     pub fn request(&self) -> WireRequest {
-        WireRequest::new(
-            self.kind,
-            self.request_id,
-            addr::key_to_bytes(&self.r.public_key()),
-        )
+        WireRequest {
+            body: self.body.clone(),
+            ..WireRequest::new(
+                self.kind,
+                self.request_id,
+                addr::key_to_bytes(&self.r.public_key()),
+            )
+        }
     }
 }
 
@@ -119,6 +133,13 @@ pub struct Verified {
 }
 
 impl Verified {
+    /// Whether the mint refused: the reply is signed and checked like an answer,
+    /// and its body is the refusal (what the HTTP call would have returned with
+    /// its 4xx). The caller reads it as such, and does not read it as an answer.
+    pub fn refused(&self) -> bool {
+        self.reply.status == STATUS_REFUSED
+    }
+
     /// The signed body: the bytes the HTTP call would have returned.
     pub fn body(&self) -> &[u8] {
         &self.reply.body
@@ -248,6 +269,9 @@ pub async fn ask_mint_info(
         )));
     }
     let v = ask(client, cfg, flight, save).await?;
+    if v.refused() {
+        return Err(AskError::Verify(VerifyError::Refused(STATUS_REFUSED)));
+    }
     let info =
         check_mint_info(&v.reply.body, cfg.wire_version, &cfg.network).map_err(AskError::Verify)?;
     Ok(Outcome {

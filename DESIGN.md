@@ -64,10 +64,12 @@ that DID, so the ID is now the DID and nothing is reduced.
   120, input 186 to 187, output 81 to 82. The fees are 0 in the family today, so no
   amount changes; the fee-sized length does, by those bytes.
 
-## The AIR request (mint info, keys, keysets, rotation)
+## The AIR request (mint info, keys, keysets, rotation, rollover, check-state)
 
-`air_request` carries one read-only question from a wallet to a mint over AIR and
-the mint's signed answer. The long form, with the alternatives that were rejected
+`air_request` carries one question from a wallet to a mint over AIR and the
+mint's signed answer. The first four are reads; rollover and check-state (kinds 5
+and 6) carry a request body, and rollover changes the mint's state (see the last
+items of this list). The long form, with the alternatives that were rejected
 and the prototype's run, is `air-sandbox/REQUEST-DESIGN.md` in sandbox-mint; what
 matters for this crate:
 
@@ -123,6 +125,29 @@ matters for this crate:
   if a derivation changes.
 - **Crates.** AIR uses `secp256k1` 0.31 and this crate 0.30; no type crosses
   (keys travel as bytes or AIR's text form), as for the seal.
+- **A request body, and a 4-byte length (rollover, check-state).** `WireRequest` has
+  always had a `body`; `body_len` was two bytes, which cannot carry a rollover of
+  1000 notes (about 0.4 to 0.5 MB of JSON). It is a `u32` now, in place: envelope
+  version 0 is kept and `WIRE_VERSION` does not move, because no release uses v0.
+  The fixed part of a request is 71 bytes (151 sealed), the request hash covers the
+  4-byte length, and the goldens (five request hashes and the reply digest) were
+  recomputed with Python's `hashlib`, with a new golden for a request with a body.
+  The envelope sets no ceiling of its own: the ceiling is the mint's setting
+  (`server.rollover_bytes`, `server.check_state_bytes`, 1 MiB by default), applied
+  to the body before it is parsed; the transport's limit is 16 MiB.
+- **A refusal is signed.** `STATUS_REFUSED` (2) is a reply to a request the mint
+  understood and refuses (the HTTP `4xx`); its body is the JSON the HTTP route would
+  answer with. It passes `verify_answer` like an answer (mint, signature, id, hash,
+  age), so it is also a receipt; `Verified::refused()` says which it is, and
+  `ask_mint_info` treats it as an error. `serve` (`answer_request`) now gets the body
+  too, and returns `Served::Refused(body)` beside `Body` and `Unavailable`. Any other
+  status is still an error.
+- **Idempotency is the mint's, not the envelope's.** A resent request has the same
+  id, key, body and hash, and the reply cell is write-once, so the first reply stays;
+  what makes a second delivery harmless for rollover is that the mint answers a
+  body it has already answered from its store (REQUEST-DESIGN.md section 15). The
+  wallet's `InFlight` carries the body (`InFlight::with_body`), fixed for the life
+  of the request, so every retry has the same hash.
 
 ## The seal and AIR
 

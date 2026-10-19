@@ -2,6 +2,13 @@
 
 ## 0.5.0 (unreleased)
 
+**Rollover and check-state over AIR (unreleased).**
+
+- **`air_request` carries the PSP's rollover and check-state.** New kinds `KIND_ROLLOVER` (5) and `KIND_CHECK_STATE` (6), whose request body is the JSON the HTTP call posts and whose reply body is the JSON it returns, and a new reply status `STATUS_REFUSED` (2): the mint refuses, signed, with the HTTP `4xx` body. Additive; no `WIRE_VERSION` bump.
+- **The request's `body_len` is 4 bytes, not 2** (a rollover of 1000 notes is about half a megabyte). Widened in place, envelope version 0 kept, because nothing that uses v0 has been released. A request is `REQUEST_FIXED` 71 bytes plus the body (151 sealed with no body, 149 before). The request hash covers the 4-byte length: the five golden request hashes and the reply digest golden are recomputed (with Python's `hashlib`), a golden for a request with a body is new, and the length checks of `decode` use the new offsets.
+- **`answer_request`'s `serve` takes the body** (`Fn(u8, &[u8]) -> Option<Served>`) and `Served` has `Refused(Vec<u8>)`. `InFlight` has a `body` (`InFlight::with_body`), `Verified::refused()` tells a refusal from an answer, and `ask_mint_info` treats a refusal as an error. `verify_answer` accepts `STATUS_ANSWERED` and `STATUS_REFUSED`; every other status is still `Refused(status)`.
+- Tests: a request body of a megabyte and more round trips and is part of the hash, a refusal is a signed reply with its body and a receipt, a refused reply is not mint info, and an undefined status is still rejected.
+
 **`WIRE_VERSION` is 3** (it was 2). Every service ID is the 33-byte AIR DID, 66 hex characters, in place of the 32-byte x-only key, so the bytes of ESP terms, the redeem encoding and every hash that covers a service change. There is no migration and no dual format: a version 2 peer is refused by `check_health`, and a 64-character ID is refused with a message that says to use the DID. The reason is that AIR names a service by its DID, and the x-only form drops the parity byte.
 
 - **New module `service`:** `ServiceDid` (33 bytes; `parse`, `from_slice`, `serialize`, `to_hex`, `public_key`, `x_only`; `Display`, `FromStr`, `From<PublicKey>`; serde as a 66-character hex string), and `DidError` (`NotHex`, `BadLength`, `XOnly`, `NotAKey`). `x_only()` is for signing and checking a BIP340 signature only, and is never an ID.
