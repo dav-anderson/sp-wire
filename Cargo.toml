@@ -10,6 +10,13 @@ description = "The wire types, encodings and constants shared by the Service Poi
 default = []
 # Seal and open the PSP payload. Needs AIR, so it is off unless asked for.
 seal = ["dep:air"]
+# The mint-info request over AIR: the envelopes, the cell addresses, signing and
+# checking a reply. Pure (no network). Implies `seal`, so it needs AIR.
+air-request = ["seal"]
+# The thin AIR transport (connect, Create, Read, held reads) and an in-process
+# test server. Needs `air_server` and `tokio`. `air_server` depends on `../air` by
+# path, so this feature builds only with the local patches in the README.
+air-client = ["air-request", "dep:air_server", "dep:tokio"]
 
 [dependencies]
 # mint-core is pinned to its release tag; only its types crate is used.
@@ -25,6 +32,11 @@ hex = "0.4.3"
 # export is merged upstream and this rev is moved to the merged commit, build
 # with the git-ignored patch below pointing at a checkout that has the export.
 air = { git = "https://github.com/ramp-stack/air", rev = "741b1cf4ae633aebafcada4d812eb459566d0df7", optional = true }
+# air_server has no tags either: pinned by commit (bab9ae0, "Release air_server 0.1.0").
+# Its manifest names `air` as `path = "../air"`, which cannot be resolved from a git
+# checkout, so a build with `air-client` needs both patches (the README, "The AIR transport").
+air_server = { git = "https://github.com/ramp-stack/air_server", rev = "bab9ae05e32967603dde9aa0e613070306092e80", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"], optional = true }
 
 [dev-dependencies]
 secp256k1 = { version = "0.30", default-features = false, features = ["global-context", "serde"] }
@@ -36,3 +48,5 @@ secp256k1 = { version = "0.30", default-features = false, features = ["global-co
 # mint-types = { path = "../mint-core-v0.1.3/crates/mint-types" }
 # [patch."https://github.com/ramp-stack/air"]
 # air = { path = "../air" }   # a checkout of AIR with `SecretKey` exported; needed until upstream has it
+# [patch."https://github.com/ramp-stack/air_server"]
+# air_server = { path = "../air_server" }   # beside that `../air`; needed for `air-client`

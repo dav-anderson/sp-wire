@@ -13,6 +13,8 @@
 //! - [`psp`], [`esp`] and [`fsp`]: the request and response bodies of each mint.
 //! - [`codes`]: the `code` of an error body.
 //! - [`service`]: [`ServiceDid`], the service ID: an AIR DID, 33 bytes, 66 hex characters.
+//! - `air_request` (feature `air-request`, with `air-client` for the transport): the first request
+//!   between two parties over AIR, mint info with a mint-signed reply. Rides [`WIRE_VERSION`] 3.
 //! - [`version`]: [`WIRE_VERSION`] and the check a wallet makes against `/health`.
 //! - [`storage`]: the storage policy (an ordered list of service IDs per kind of
 //!   data), its parser and its checks. Not part of the wire.
@@ -23,6 +25,8 @@
 //! Every encoding is pinned by a golden test. Changing a byte of one fails the
 //! test, and the change must bump [`WIRE_VERSION`].
 
+#[cfg(feature = "air-request")]
+pub mod air_request;
 pub mod codes;
 pub mod dec;
 pub mod esp;

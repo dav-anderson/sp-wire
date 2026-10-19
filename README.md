@@ -25,6 +25,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
+| `air_request` | the mint-info request over AIR (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
@@ -59,6 +60,9 @@ If one of them fails you changed the wire. If that was meant, bump
 
 `seal` (off by default) adds `encrypt`, `decrypt` and `parse_public_key`, which
 need AIR. The sealed format and its sizes are available without it.
+`air-request` (off by default, implies `seal`) adds the pure parts of the mint-info
+request over AIR, and `air-client` (implies `air-request`) adds its transport,
+which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
 `mint-types` at mint-core `v0.1.3`. With `seal`, AIR is pinned by commit
@@ -81,10 +85,55 @@ air = { path = "/Users/you/air" }
 When upstream has merged the export, the final pin is that merged commit: the
 `rev` in `Cargo.toml` moves to it and the patch is no longer needed.
 
+## The AIR request
+
+`air_request` is the first call between a wallet and a mint that does not go over
+HTTP: the wallet asks for **mint info** (what `GET /health` reports: `status`,
+`wire_version`, `network`) and verifies a reply the mint signed with its DID key.
+The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
+sandbox-mint; this module is that design. In short: the wallet writes a sealed
+request into a numbered mailbox of the mint's DID (anyone can write a slot, only
+the mint can open it), the mint answers in a reply cell only the wallet and the
+mint can compute (`r.shared(mint) == mint.shared(R)`), and the reply carries the
+mint's BIP340 signature, so an untrusted AIR server can withhold a reply but not
+forge one. It rides `WIRE_VERSION` 3, with no bump.
+
+- **Feature `air-request`** (implies `seal`): the pure parts. Envelopes
+  (`envelope`), addresses, sealing and signature bytes (`addr`), `MintInfo`. No
+  network. The two address labels are `sp-air-mailbox-v0` and
+  `sp-air-reply-cell-v0`; the request hash is `sp-air-req-v0`; the reply digest is
+  `sp-air-reply-sig-v0`. Every derivation and both envelopes are pinned by goldens
+  computed independently with Python's `hashlib`, and tamper tests cover each
+  check a wallet makes.
+- **Feature `air-client`** (implies `air-request`; adds `air_server` and `tokio`):
+  the thin transport (`client`: connect to a configured server name and host, raw
+  `Create` and `Read`, held reads; no `orange_me` helper), the wallet's whole flow
+  (`ask::ask_mint_info`: read the reply cell first, write a request into the first
+  free slot, wait, retry with the same `request_id` and `r`, verify), and
+  `local_server`, an `air_server` started in the test process.
+- **Port 5702.** The AIR client always dials 5702 for `ws` (upstream item 12), so a
+  test server cannot take a free port: `local_server::start` needs it free and says
+  so when it is not. Test binaries run one after another, so each finds it free.
+- **`air-client` needs two local patches** while `air_server` names AIR as
+  `path = "../air"` (upstream issue 3 in FINDINGS): AIR and `air_server` must be
+  checkouts beside each other, and the AIR patch path must be the folder
+  `<air_server>/../air`, or two `air` crates are built and their types do not match:
+
+```toml
+[patch."https://github.com/ramp-stack/air"]
+air = { path = "/Users/you/sandbox-mint/air-sandbox/air" }
+[patch."https://github.com/ramp-stack/air_server"]
+air_server = { path = "/Users/you/sandbox-mint/air-sandbox/air_server" }
+```
+
 ## Build and test
 
     cargo test --all-features
     cargo fmt --check
+
+`--all-features` includes `air-client`, so it needs the two patches above and
+port 5702 free (see "The AIR request"). Without them, test the other features by
+name, for example `cargo test --features seal`.
 
 To build against local folders, put this in `.cargo/config.toml` in this folder
 (it is git-ignored), or uncomment the same block at the bottom of `Cargo.toml`

@@ -64,6 +64,46 @@ that DID, so the ID is now the DID and nothing is reduced.
   120, input 186 to 187, output 81 to 82. The fees are 0 in the family today, so no
   amount changes; the fee-sized length does, by those bytes.
 
+## The AIR request (mint info)
+
+`air_request` carries one read-only question from a wallet to a mint over AIR and
+the mint's signed answer. The long form, with the alternatives that were rejected
+and the prototype's run, is `air-sandbox/REQUEST-DESIGN.md` in sandbox-mint; what
+matters for this crate:
+
+- **Why a mailbox and a reply cell.** AIR's `Read` needs the exact key and its
+  `Create` must be signed by the cell's secret. A cell derived from the mint's
+  public key cannot be written by a wallet, and the mint cannot guess a
+  wallet-chosen id. So the request goes into a numbered mailbox whose secrets
+  anyone can compute (`sha256("sp-air-mailbox-v0" || mint DID || slot)`), and the
+  reply into a cell only the two can compute (`sha256("sp-air-reply-cell-v0" ||
+  shared || request_id || index)`, where `shared` is AIR's
+  `r.shared(mint_pub, None)`, the same value the mint gets from `R`).
+- **Write-once is the idempotence record.** The mint `Create`s the reply first and
+  treats a stored record coming back as "already answered"; no read-then-write, so
+  a retry that reached the mint twice or two mint processes end with one reply.
+- **Sign bytes, ship bytes.** The reply's signed bytes are the reply up to its
+  signature; the verifier never re-serialises. The digest is
+  `sha256("sp-air-reply-sig-v0" || signed bytes)` and the signature is
+  `SecretKey::sign(Id::from(digest))`, a BIP340 signature under the mint's bare DID
+  key, so a saved reply (the receipt) verifies from the 33-byte DID alone.
+- **Two labels, not one.** The reply cell and the reply digest first shared the
+  label `sp-air-reply-v0`; they are two labels now (REQUEST-DESIGN.md F5), so the
+  same bytes can never be both an address and a digest input.
+- **Test DID.** The goldens use the secp256k1 generator as the mint DID. The
+  prototype's `02` plus repeated bytes is probably not a curve point, which
+  `ServiceDid` refuses.
+- **Why the wallet's flow is here.** `ask::ask_mint_info` is the whole wallet side
+  (it keeps `request_id` and `r` through a `save` callback before the first write,
+  reads the reply cell before writing, retries with the same pair, verifies). It
+  lives in this crate so that the wallet and the mints' integration tests run the
+  same code.
+- **No bump.** Nothing here is older than wire version 3. The envelope has its
+  own version byte (0), and the `-v0` in each label moves every address or digest
+  if a derivation changes.
+- **Crates.** AIR uses `secp256k1` 0.31 and this crate 0.30; no type crosses
+  (keys travel as bytes or AIR's text form), as for the seal.
+
 ## The seal and AIR
 
 The PSP payload is encrypted to the mint's DID public key with AIR's public key
