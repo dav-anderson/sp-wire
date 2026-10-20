@@ -193,7 +193,9 @@ change. The byte-array and serde forms of AIR's public key are the 64-byte
 ElligatorSwift form; sp-wire uses only Display, FromStr and `SecretKey`'s serde
 (a 32-byte hex string), so existing `mint_did_key.json` files still load.
 
-AIR (2.0.3 and 2.1.0) uses `secp256k1` 0.31 and this crate (like mint-core) uses
+AIR (2.0.3, 2.1.0 and 3.0.0) uses `secp256k1` 0.31 and this crate (like mint-core) uses
 0.30. The two versions sit side by side and no type crosses between them: the DID
 keys are AIR's own types, and the rest of the wire is `secp256k1` 0.30. AIR 2.0.3
-needed its default feature `stream` to stay on; 2.1.0 has no such feature.
+needed its default feature `stream` to stay on; 2.1.0 and 3.0.0 have no such feature. AIR 3.0.0 changed only
+`channel.rs`, which this crate does not use, and air_server 1.0.0 changed only its
+version and its dependency on AIR 3.0.0.

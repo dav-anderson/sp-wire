@@ -1,6 +1,6 @@
 //! The OP_RETURN payload is encrypted to the mint's DID key.
 //!
-//! The cipher is AIR's (2.0.3, and unchanged in 2.1.0), not a new scheme: `PublicKey::encrypt` seals
+//! The cipher is AIR's (2.0.3, and unchanged in 2.1.0 and 3.0.0), not a new scheme: `PublicKey::encrypt` seals
 //! bytes to a public key and `SecretKey::decrypt` opens them with the matching
 //! secret key. It does an ElligatorSwift key exchange and encrypts with
 //! ChaCha20-Poly1305, and a fresh sender key is made for every message.
@@ -65,8 +65,8 @@ impl fmt::Display for SealError {
 
 impl Error for SealError {}
 
-// AIR 2.1.0 (741b1cf) does not export `SecretKey`. The line below needs the AIR
-// commit that adds it next to `PublicKey` (branch `export-secretkey`, to be
+// AIR 3.0.0 (ff41c09) does not export `SecretKey`. The line below needs the AIR
+// commit that adds it next to `PublicKey` (branch `air3-export-secretkey`, to be
 // proposed upstream); until then it builds with the patch in the README. When
 // upstream has merged it, the `rev` in Cargo.toml moves to the merged commit and
 // this note goes.

@@ -66,14 +66,15 @@ which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
 `mint-types` at mint-core `v0.1.3`. With `seal`, AIR is pinned by commit
-(`741b1cf`, 2.1.0; AIR has no tags). AIR uses `secp256k1` 0.31 and this crate
+(`ff41c09`, 3.0.0; AIR's only tag is `v2.1.0`, on `741b1cf`, and 3.0.0 has none). `air_server`
+(for `air-client`) is pinned by commit too (`ec6ac1f`, 1.0.0; its only tag is `v0.1.0`). AIR uses `secp256k1` 0.31 and this crate
 0.30; see [DESIGN.md](DESIGN.md) for why that is safe. The crate needs rustc 1.93
 or later.
 
-**AIR 2.1.0 does not export `SecretKey`, so `seal` does not build from `741b1cf`
+**AIR 3.0.0 does not export `SecretKey`, so `seal` does not build from `ff41c09`
 alone.** The fix is one word in AIR's `src/lib.rs` (`SecretKey` next to
 `PublicKey` in the `pub use names::secp256k1::{...}` line), made on the branch
-`export-secretkey` of a local AIR checkout and not yet in upstream. Until it is, put
+`air3-export-secretkey` (3.0.0 plus that commit) of a local AIR checkout and not yet in upstream. Until it is, put
 this in `.cargo/config.toml` in this folder (git-ignored; never commit it), with the
 path of that checkout:
 

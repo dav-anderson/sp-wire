@@ -26,16 +26,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4.3"
-# AIR has no tags, so it is pinned by commit: 741b1cf, 2.1.0 on master (16 Oct
-# 2026). Its manifest has no path dependency, so it builds from git as it is,
-# except that 2.1.0 does not export `SecretKey` (see the README): until the
-# export is merged upstream and this rev is moved to the merged commit, build
-# with the git-ignored patch below pointing at a checkout that has the export.
-air = { git = "https://github.com/ramp-stack/air", rev = "741b1cf4ae633aebafcada4d812eb459566d0df7", optional = true }
-# air_server has no tags either: pinned by commit (bab9ae0, "Release air_server 0.1.0").
+# AIR is pinned by commit. Its only tag is `v2.1.0` (on 741b1cf); 3.0.0 has none, so
+# this is the 3.0.0 release commit, ff41c09 on master (19 Oct 2026). Its manifest has
+# no path dependency, so it builds from git as it is, except that 3.0.0 does not
+# export `SecretKey` (see the README): until the export is merged upstream and this
+# rev is moved to the merged commit, build with the git-ignored patch in the README
+# pointing at a checkout that has the export.
+air = { git = "https://github.com/ramp-stack/air", rev = "ff41c09a19d9f61fc56f31c832b2cfa25b4fc315", optional = true }
+# air_server is pinned by commit too: its only tag is `v0.1.0` (on bab9ae0); 1.0.0 has
+# none, so this is ec6ac1f, "Release air_server 1.0.0 with AIR 3".
 # Its manifest names `air` as `path = "../air"`, which cannot be resolved from a git
 # checkout, so a build with `air-client` needs both patches (the README, "The AIR transport").
-air_server = { git = "https://github.com/ramp-stack/air_server", rev = "bab9ae05e32967603dde9aa0e613070306092e80", optional = true }
+air_server = { git = "https://github.com/ramp-stack/air_server", rev = "ec6ac1fe010bd3a2a450f03e330876c6ffe83511", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"], optional = true }
 
 [dev-dependencies]
