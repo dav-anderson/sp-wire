@@ -12,6 +12,11 @@
 //!           sealed to R; the fixed part is 111 bytes, the signed bytes are reply[0 .. 111+n]
 //! ```
 //!
+//! A kind names a call (`GET /keysets`, `POST /rollover`), not a mint: the same
+//! kind to two mints (the PSP's DID and the ESP's) gets each one's own reply, in
+//! the shape its own HTTP route returns, and the body is opaque here. A mint
+//! answers the kinds it serves and skips the rest.
+//!
 //! `request_hash = sha256("sp-air-req-v0" || kind || request_id || R || body_len || body)`.
 //! `digest = sha256("sp-air-reply-sig-v0" || reply[0 .. 111+n])`, and the mint
 //! signs it with BIP340 using its bare DID key. The wallet keeps the reply
@@ -42,6 +47,18 @@ pub const KIND_ROLLOVER: u8 = 5;
 /// The request kind of a spent check (`POST /check-state`): the body is the
 /// request JSON the HTTP call posts.
 pub const KIND_CHECK_STATE: u8 = 6;
+/// The request kind of the mint's fees and ceilings (`GET /fees`, the ESP's).
+pub const KIND_FEES: u8 = 7;
+/// The request kind of an exchange (`POST /exchange`, the ESP's): the body is the
+/// request JSON the HTTP call posts.
+pub const KIND_EXCHANGE: u8 = 8;
+/// The request kind of a transfer (`POST /transfer`, the ESP's): the body is the
+/// request JSON the HTTP call posts.
+pub const KIND_TRANSFER: u8 = 9;
+/// The request kind of a redemption (`POST /redeem`, the ESP's): the body is the
+/// request in its canonical **binary** encoding, as the HTTP call posts it, not
+/// JSON.
+pub const KIND_REDEEM: u8 = 10;
 /// The reply status of a request that was answered. The body is what the HTTP
 /// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;
@@ -556,6 +573,41 @@ mod tests {
     }
 
     #[test]
+    fn golden_request_hash_for_the_esp_kinds() {
+        let (id, r) = (test_request().request_id, test_request().reply_key);
+        // No body: fees.
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_FEES, id, r).hash()),
+            "f7c0dfbf621e7545f70efe69ce125722b1ebc5da4f480cc80869e52e2d7f090c"
+        );
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_EXCHANGE, id, r).hash()),
+            "e682517e08d443f1f42f07f52a5b3e0b8c3e51878748824fa60d31696be3cdd0"
+        );
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_TRANSFER, id, r).hash()),
+            "ba3616d215d475829266da2582c4611841df23399e85326252371339d5f4348c"
+        );
+        // A redemption body is binary, and any byte value is in the hash.
+        let redeem = WireRequest {
+            body: vec![0, 1, 2, 3, 255, 254, 0, 128],
+            ..WireRequest::new(KIND_REDEEM, id, r)
+        };
+        assert_eq!(
+            hex::encode(redeem.hash()),
+            "4489ead6f7e366d67da6dcb4a66e07ce6af26ad4df35dc040ad150b8bc0a210e"
+        );
+        let exchange = WireRequest {
+            body: br#"{"inputs":[]}"#.to_vec(),
+            ..WireRequest::new(KIND_EXCHANGE, id, r)
+        };
+        assert_eq!(
+            hex::encode(exchange.hash()),
+            "c50abd8d83063542efe34d4347993c0df1aac84bb47dcd041fb6e3673a42eaa7"
+        );
+    }
+
+    #[test]
     fn golden_request_hash_with_a_body() {
         // The body and its length (4 bytes) are in the hash.
         let (id, r) = (test_request().request_id, test_request().reply_key);
@@ -1025,6 +1077,42 @@ mod tests {
             verify_answer(&plain, &did, &other, now_secs(), 300).unwrap_err(),
             VerifyError::WrongRequestHash
         );
+    }
+
+    #[test]
+    fn the_esp_kinds_carry_their_bodies_both_ways_including_binary() {
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        // The mint echoes the body for three of them and refuses the fourth.
+        let serve = |kind: u8, body: &[u8]| match kind {
+            KIND_FEES => Some(Served::Body(br#"{"redeem":{}}"#.to_vec())),
+            KIND_EXCHANGE | KIND_TRANSFER | KIND_REDEEM => Some(Served::Body(body.to_vec())),
+            _ => None,
+        };
+        let binary: Vec<u8> = (0..=255u8).collect();
+        for (kind, body) in [
+            (KIND_FEES, Vec::new()),
+            (KIND_EXCHANGE, br#"{"inputs":[]}"#.to_vec()),
+            (KIND_TRANSFER, br#"{"inputs":[1]}"#.to_vec()),
+            (KIND_REDEEM, binary.clone()),
+        ] {
+            let (request, sealed) = asked_with(kind, &body, &mint, &r);
+            let answer = answer_request(&mint, &sealed, now_secs(), &serve).unwrap();
+            assert_eq!(
+                answer.request.body, body,
+                "kind {kind}: the mint sees the body"
+            );
+            let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+            let reply = verify_answer(&plain, &did, &request, now_secs(), 300).unwrap();
+            assert_eq!(reply.status, STATUS_ANSWERED);
+            if kind != KIND_FEES {
+                assert_eq!(reply.body, body, "kind {kind}: and the wallet gets it back");
+            }
+        }
+        // A kind the mint does not serve is skipped, whatever it carries.
+        let (_, sealed) = asked_with(KIND_KEYS, b"", &mint, &r);
+        assert!(answer_request(&mint, &sealed, now_secs(), &serve).is_err());
     }
 
     #[test]

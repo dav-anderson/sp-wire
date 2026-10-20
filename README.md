@@ -61,7 +61,7 @@ If one of them fails you changed the wire. If that was meant, bump
 `seal` (off by default) adds `encrypt`, `decrypt` and `parse_public_key`, which
 need AIR. The sealed format and its sizes are available without it.
 `air-request` (off by default, implies `seal`) adds the pure parts of the read-only
-requests over AIR (mint info, keys, keysets, rotation, rollover, check-state), and `air-client` (implies `air-request`) adds its transport,
+requests over AIR (mint info, keys, keysets, rotation, rollover, check-state, and the ESP's fees, exchange, transfer and redeem), and `air-client` (implies `air-request`) adds its transport,
 which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
@@ -102,6 +102,14 @@ with the HTTP `4xx` body (`STATUS_REFUSED`). The request's `body_len` is 4 bytes
 was 2 until a rollover of 1000 notes, about half a megabyte, needed more; envelope
 version 0 is kept, since nothing that uses it was released). The kinds and the
 status are additive: no bump.
+
+The ESP's wallet-facing calls use the same envelope. A kind names a call, not a
+mint, so the ESP mint (its own DID) answers the kinds it serves in the shape its own
+routes return: mint info 1, keysets 3, rotation 4 and rollover 5 are the PSP's
+kinds, and the ESP adds `KIND_FEES` 7 (`GET /fees`), `KIND_EXCHANGE` 8,
+`KIND_TRANSFER` 9 and `KIND_REDEEM` 10 (`POST /exchange`, `/transfer`, `/redeem`;
+the redeem body is the canonical binary encoding, not JSON). The ESP has no keys
+route, so it skips `KIND_KEYS`. The envelope does not read a body.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
 request into a numbered mailbox of the mint's DID (anyone can write a slot, only

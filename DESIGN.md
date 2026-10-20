@@ -149,6 +149,17 @@ matters for this crate:
   wallet's `InFlight` carries the body (`InFlight::with_body`), fixed for the life
   of the request, so every retry has the same hash.
 
+- **The ESP's calls are more kinds, not more envelope (7 to 10).** `KIND_FEES` (7),
+  `KIND_EXCHANGE` (8), `KIND_TRANSFER` (9) and `KIND_REDEEM` (10) are constants and
+  nothing else: `answer_request` hands the kind and the body to the mint's `serve`
+  and the envelope never reads either, so a binary body (the redeem encoding) is
+  as good as JSON, and the four-byte length already carries any ceiling the mint
+  sets. The PSP's kinds 1, 3, 4 and 5 are used for the ESP too, because a kind names
+  a call and the DID addressed decides whose reply it is; nothing in this crate
+  looks inside a reply body for them but `check_mint_info`, and the ESP's `/health`
+  has the same three fields. The goldens pin the hash of each new kind, one of them
+  with a binary body.
+
 ## The seal and AIR
 
 The PSP payload is encrypted to the mint's DID public key with AIR's public key
