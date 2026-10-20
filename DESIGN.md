@@ -149,6 +149,12 @@ matters for this crate:
   wallet's `InFlight` carries the body (`InFlight::with_body`), fixed for the life
   of the request, so every retry has the same hash.
 
+- **The FSP's calls are two more kinds (11 and 12).** `KIND_FSP_ISSUE` (11, `POST
+  /issue`) and `KIND_FSP_SPEND` (12, `POST /spend`) are constants and nothing else, as
+  for the ESP's. The FSP's reads are the kinds that already exist: `GET /health`,
+  `/keys`, `/fees` and `/rotation` are 1, 2, 7 and 4, and the DID asked (the service's)
+  decides whose reply it is. No `WIRE_VERSION` bump.
+
 - **The ESP's calls are more kinds, not more envelope (7 to 10).** `KIND_FEES` (7),
   `KIND_EXCHANGE` (8), `KIND_TRANSFER` (9) and `KIND_REDEEM` (10) are constants and
   nothing else: `answer_request` hands the kind and the body to the mint's `serve`

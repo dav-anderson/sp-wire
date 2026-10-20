@@ -59,6 +59,12 @@ pub const KIND_TRANSFER: u8 = 9;
 /// request in its canonical **binary** encoding, as the HTTP call posts it, not
 /// JSON.
 pub const KIND_REDEEM: u8 = 10;
+/// The request kind of an FSP issue (`POST /issue`, the FSP's): the body is the
+/// request JSON the HTTP call posted.
+pub const KIND_FSP_ISSUE: u8 = 11;
+/// The request kind of an FSP spend (`POST /spend`, the FSP's): the body is the
+/// request JSON the HTTP call posted.
+pub const KIND_FSP_SPEND: u8 = 12;
 /// The reply status of a request that was answered. The body is what the HTTP
 /// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;
@@ -608,6 +614,37 @@ mod tests {
     }
 
     #[test]
+    fn golden_request_hash_for_the_fsp_kinds() {
+        // Computed independently with hashlib: sha256("sp-air-req-v0" || kind ||
+        // request_id || R || body_len (4, BE) || body).
+        let (id, r) = (test_request().request_id, test_request().reply_key);
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_FSP_ISSUE, id, r).hash()),
+            "a533840b7e1aa6c0cbfe637520d6701119edf935e148c50fffbb2b42b23a9e76"
+        );
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_FSP_SPEND, id, r).hash()),
+            "2da52d9ffd6cfe774681d002de74613c19eaba82a0717b0a7e4b72e661f0312e"
+        );
+        let issue = WireRequest {
+            body: br#"{"service":"aa"}"#.to_vec(),
+            ..WireRequest::new(KIND_FSP_ISSUE, id, r)
+        };
+        assert_eq!(
+            hex::encode(issue.hash()),
+            "263d832f3c4ae43d57ffff4908714ef1646380b698866654a0bf3306c45c7551"
+        );
+        let spend = WireRequest {
+            body: br#"{"inputs":[]}"#.to_vec(),
+            ..WireRequest::new(KIND_FSP_SPEND, id, r)
+        };
+        assert_eq!(
+            hex::encode(spend.hash()),
+            "e038e6ccb5844e381a97c824a27ae691e072d517445095c195e923ffd2876a6a"
+        );
+    }
+
+    #[test]
     fn golden_request_hash_with_a_body() {
         // The body and its length (4 bytes) are in the hash.
         let (id, r) = (test_request().request_id, test_request().reply_key);
@@ -1112,6 +1149,32 @@ mod tests {
         }
         // A kind the mint does not serve is skipped, whatever it carries.
         let (_, sealed) = asked_with(KIND_KEYS, b"", &mint, &r);
+        assert!(answer_request(&mint, &sealed, now_secs(), &serve).is_err());
+    }
+
+    #[test]
+    fn the_fsp_kinds_carry_their_bodies_both_ways() {
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        let serve = |kind: u8, body: &[u8]| match kind {
+            KIND_FSP_ISSUE | KIND_FSP_SPEND => Some(Served::Body(body.to_vec())),
+            _ => None,
+        };
+        for (kind, body) in [
+            (KIND_FSP_ISSUE, br#"{"service":"aa","outputs":[]}"#.to_vec()),
+            (KIND_FSP_SPEND, br#"{"inputs":[],"memo":"x"}"#.to_vec()),
+        ] {
+            let (request, sealed) = asked_with(kind, &body, &mint, &r);
+            let answer = answer_request(&mint, &sealed, now_secs(), &serve).unwrap();
+            assert_eq!(answer.request.body, body);
+            let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+            let reply = verify_answer(&plain, &did, &request, now_secs(), 300).unwrap();
+            assert_eq!(reply.status, STATUS_ANSWERED);
+            assert_eq!(reply.body, body);
+        }
+        // An ESP kind is skipped by a mint that serves only the FSP's two.
+        let (_, sealed) = asked_with(KIND_EXCHANGE, b"{}", &mint, &r);
         assert!(answer_request(&mint, &sealed, now_secs(), &serve).is_err());
     }
 

@@ -110,7 +110,10 @@ routes return: mint info 1, keysets 3, rotation 4 and rollover 5 are the PSP's
 kinds, and the ESP adds `KIND_FEES` 7 (`GET /fees`), `KIND_EXCHANGE` 8,
 `KIND_TRANSFER` 9 and `KIND_REDEEM` 10 (`POST /exchange`, `/transfer`, `/redeem`;
 the redeem body is the canonical binary encoding, not JSON). The ESP has no keys
-route, so it skips `KIND_KEYS`. The envelope does not read a body.
+route, so it skips `KIND_KEYS`. The FSP mint's wallet-facing calls are the same
+envelope again: its `GET /health`, `/keys`, `/fees` and `/rotation` are kinds 1, 2, 7
+and 4, and it adds `KIND_FSP_ISSUE` 11 (`POST /issue`) and `KIND_FSP_SPEND` 12
+(`POST /spend`), JSON bodies. The envelope does not read a body.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
 request into a numbered mailbox of the mint's DID (anyone can write a slot, only

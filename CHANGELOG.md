@@ -4,6 +4,11 @@
 
 **AIR 3.0.0 and air_server 1.0.0 (unreleased).** The pins move from air 2.1.0 (`741b1cf`) to air 3.0.0 (`ff41c09`, 19 Oct 2026) and from air_server 0.1.0 (`bab9ae0`) to air_server 1.0.0 (`ec6ac1f`). No byte on the wire changes and `WIRE_VERSION` stays 3. air 3.0.0 changes only `channel.rs` (a retried channel write resends the same signed request), which this crate does not use. air_server 1.0.0 changes only its version and its dependency on air 3.0.0; its `src/` is identical to 0.1.0. AIR 3.0.0 still does not export `SecretKey`, so the patch in the README now points at a checkout of 3.0.0 with the export on top (branch `air3-export-secretkey`). AIR's only tag is `v2.1.0` (on `741b1cf`) and air_server's only tag is `v0.1.0` (on `bab9ae0`); 3.0.0 and 1.0.0 have none, so both stay pinned by commit, and the README and `Cargo.toml` comments that said AIR has no tags now say this.
 
+**The FSP's wallet-facing calls over AIR (unreleased).**
+
+- **Two new kinds:** `KIND_FSP_ISSUE` (11, `POST /issue`) and `KIND_FSP_SPEND` (12, `POST /spend`), for fsp-mint. The request body is what the HTTP call posted (JSON), the reply body is what the route returned, and a refusal is a signed `STATUS_REFUSED` with the route's `4xx` body, as for the ESP. fsp-mint's reads reuse kinds 1 (`GET /health`), 2 (`GET /keys`), 7 (`GET /fees`) and 4 (`GET /rotation`): a kind names a call, and the DID asked (the service's) decides whose reply it is. Additive, no `WIRE_VERSION` bump, no envelope change.
+- Tests: goldens for the hash of each new kind, with and without a body (computed independently with `hashlib`), and the two kinds round trip with their bodies and a kind the mint does not serve is skipped.
+
 **Rollover and check-state over AIR (unreleased).**
 
 - **`air_request` carries the PSP's rollover and check-state.** New kinds `KIND_ROLLOVER` (5) and `KIND_CHECK_STATE` (6), whose request body is the JSON the HTTP call posts and whose reply body is the JSON it returns, and a new reply status `STATUS_REFUSED` (2): the mint refuses, signed, with the HTTP `4xx` body. Additive; no `WIRE_VERSION` bump.

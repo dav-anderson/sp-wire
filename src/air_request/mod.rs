@@ -70,11 +70,11 @@ use std::error::Error;
 use std::fmt;
 
 pub use envelope::{
-    Answer, Expect, KIND_CHECK_STATE, KIND_EXCHANGE, KIND_FEES, KIND_KEYS, KIND_KEYSETS,
-    KIND_MINT_INFO, KIND_REDEEM, KIND_ROLLOVER, KIND_ROTATION, KIND_TRANSFER, MintInfo,
-    STATUS_ANSWERED, STATUS_REFUSED, STATUS_UNAVAILABLE, Served, VerifyError, WireReply,
-    WireRequest, answer_mint_info, answer_request, build_reply, build_reply_naming,
-    check_mint_info, verify_answer, verify_receipt, verify_reply,
+    Answer, Expect, KIND_CHECK_STATE, KIND_EXCHANGE, KIND_FEES, KIND_FSP_ISSUE, KIND_FSP_SPEND,
+    KIND_KEYS, KIND_KEYSETS, KIND_MINT_INFO, KIND_REDEEM, KIND_ROLLOVER, KIND_ROTATION,
+    KIND_TRANSFER, MintInfo, STATUS_ANSWERED, STATUS_REFUSED, STATUS_UNAVAILABLE, Served,
+    VerifyError, WireReply, WireRequest, answer_mint_info, answer_request, build_reply,
+    build_reply_naming, check_mint_info, verify_answer, verify_receipt, verify_reply,
 };
 
 /// Why `host` is not a host name or IP for the AIR server setting, if it is
