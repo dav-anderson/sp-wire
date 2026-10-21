@@ -173,6 +173,43 @@ matters for this crate:
   `WIRE_VERSION` bump: nothing that exists is re-encoded, and a mint that does not know
   kind 14 skips it like any unknown kind.
 
+- **The PSP's reconciliation is kind 15, and only an accepted request is answered.**
+  `KIND_PSP_RECONCILE` (15) carries the corrected request (a payment that was held or a
+  purchase that was rejected) and the credit claim (a purchase signed with a credit
+  owed): one kind, because the mint tells them apart by its record of the payment. The
+  body is `psp::ReconcileRequest` JSON (`reply_did`, `purchase`, `keyset`, `outputs`,
+  `signature`); the reply is `psp::ReconcileResponse`, the follow-up record. AIR
+  clients are anonymous (each connects with a one-off connection key), so the envelope
+  names no sender and the proof of the right to claim is in the body: a BIP340
+  signature by the purchase's reply key over `ReconcileRequest::digest()` (tag
+  `psp-mint/reconcile/v1`: the reply DID, the purchase id, the length-prefixed keyset,
+  and the count, amount and blind nonce of every output; lengths and counts are
+  4 bytes, amounts 8 bytes, all big-endian). Only the holder of the private half may
+  claim: a public key, even one only the payer and the PSP know, is never a secret.
+  This matches the ESP's `service_signature` and `spend_signature`. The envelope's `R`
+  is not checked; the wallet sets it to the reply key so that the answer is sealed to
+  it. `hash()` (tag `psp-mint/reconcile-request/v1`: the digest and the signature) keys
+  a stored answer and a counted refusal.
+  **No refusal replies.** Telling an asker why a request failed is a free read for
+  whoever holds the reply key, and tells a stranger nothing it should know, so a
+  request that is not accepted gets no reply at all. `Served::Ignored(reason)` is the
+  fourth thing a mint can say to a request, beside `Body`, `Unavailable` and
+  `Refused`: `answer_request` returns an error that carries the reason (for the mint's
+  log) and builds no reply, so the listener writes nothing to the reply cell. A
+  transient failure of the mint is ignored too, and the asker sends the identical
+  request again. The rules the request must follow are stated up front, in the first
+  delivery (`ReconcileRules`, carried by `Signed`, `Refused` and `Held` when the record
+  opens a window); see "The PSP's delivery of a purchase" below. The new codes
+  (`wrong_total`, `nothing_to_issue`, `unknown_denomination`, `duplicate_blind_nonce`,
+  `blind_nonce_used`, `bad_signature`, `unknown_payment`, `ambiguous_payment`,
+  `payment_closed`, `too_many_attempts`) are the mint's log and audit codes: no
+  refusal carries them to the asker. `SignedOutput` moved to `psp` so that
+  `ReconcileResponse` can name it without the `air-request` feature; it is still
+  exported from `air_request::delivery`. No `WIRE_VERSION` bump: nothing that exists is
+  re-encoded, `rules` is `serde(default)` and is not written when absent, so the bytes
+  of a record without it are as they were, and a mint that does not know kind 15 skips
+  it like any unknown kind.
+
 - **The ESP's calls are more kinds, not more envelope (7 to 10).** `KIND_FEES` (7),
   `KIND_EXCHANGE` (8), `KIND_TRANSFER` (9) and `KIND_REDEEM` (10) are constants and
   nothing else: `answer_request` hands the kind and the body to the mint's `serve`
@@ -231,6 +268,17 @@ likes), so it needs no mailbox and no request.
   payer's reaction is the same (nothing signed, wait); `STATUS_UNAVAILABLE` is not
   used. The PSP's window is a setting of the PSP, which the wallet learns from the
   record.
+- **The rules.** A record that opens a window carries `rules: Option<ReconcileRules>`
+  (`serde(default)`, not written when `None`): what to send (`corrected_request` for a
+  held or rejected purchase, `credit_claim` for a credit), the kind (15), the exact
+  `due_units` the outputs must add up to after every fee, the reconciliation fee, the
+  read and write costs the PSP prepays, the deadline, the number of attempts and
+  `FORFEIT_NOTICE`. They are fixed when the window opens, so a payment that is already
+  open keeps the fees it opened with, and `due_units` is a whole number of PSP units
+  with no dollar or bitcoin price in it. They are a fallback for a fallback: a wallet
+  that reconciles automatically and checks its request against them should never fail;
+  they are spelled out for a developer or user with nonstandard tooling, as one last
+  chance to get it right before the funds are lost. `Outcome::rules()` reads them.
 - **No freshness check.** `open_record` calls `verify_answer` with `now` 0 and a
   maximum skew of `u64::MAX`, because the wallet may read the record days after it
   was written. The signature over the question's hash is what binds it.

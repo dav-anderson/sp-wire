@@ -11,7 +11,8 @@ use sp_wire::keyset::{KEYSET_LEN, KeysetWindow, RotationResponse, keyset_id};
 use sp_wire::payload::{self, DID_LEN, Payload};
 use sp_wire::psp::{
     Burn, BurnsRequest, BurnsResponse, KeysetsResponse, MeltRequest, PspMeltRequest,
-    PspSpendRequest, PspSpendResponse, RolloverRequest, RolloverResponse,
+    PspSpendRequest, PspSpendResponse, ReconcileRequest, ReconcileResponse, RolloverRequest,
+    RolloverResponse, SignedOutput,
 };
 
 const GOLDEN: &str = include_str!("golden/psp.txt");
@@ -163,6 +164,55 @@ fn the_psp_wire_bytes_are_unchanged() {
             outcomes: vec![MintOutputOutcome(key(140))],
             keys: vec![key(141)],
             paid: 2,
+        },
+    );
+
+    // Reconcile (AIR kind 15): two change notes, signed by the reply key.
+    let reconcile = ReconcileRequest {
+        reply_did: sp_wire::ServiceDid::from(key(90)),
+        purchase: [0x55; 32],
+        keyset: "2122232425262728".into(),
+        outputs: vec![output(4, 130), output(2, 131)],
+        signature: sig(0x99),
+    };
+    json("ReconcileRequest", &reconcile);
+    line("ReconcileRequest_digest", hex::encode(reconcile.digest()));
+    line("ReconcileRequest_hash", reconcile.hash());
+    // and it reads back
+    assert_eq!(
+        serde_json::from_str::<ReconcileRequest>(expected("ReconcileRequest")).unwrap(),
+        reconcile
+    );
+    let mut unit_keys = BTreeMap::new();
+    unit_keys.insert(4u64, key(150));
+    unit_keys.insert(2u64, key(151));
+    let mut live = BTreeMap::new();
+    live.insert("2122232425262728".to_string(), unit_keys);
+    json(
+        "ReconcileResponse",
+        &ReconcileResponse {
+            keyset: "2122232425262728".into(),
+            signatures: vec![
+                SignedOutput {
+                    blind_nonce: key(130).to_string(),
+                    signature: key(140).to_string(),
+                },
+                SignedOutput {
+                    blind_nonce: key(131).to_string(),
+                    signature: key(141).to_string(),
+                },
+            ],
+            keysets: KeysetsResponse {
+                current: "2122232425262728".into(),
+                previous: None,
+                keysets: live,
+            },
+            issued_units: 6,
+            fee_units: 2,
+            read_prepaid_units: 1,
+            write_prepaid_units: 1,
+            kept_cents: 5,
+            given_cents: 0,
         },
     );
 

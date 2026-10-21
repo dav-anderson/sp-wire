@@ -33,6 +33,28 @@ pub const NOT_EXACT: &str = "not_exact";
 /// A PSP spend with `pay` 0 pays nothing: it would only move notes between
 /// keysets, which is a rollover.
 pub const NOTHING_TO_PAY: &str = "nothing_to_pay";
+/// A PSP reconciliation request was signed by the right reply key but its
+/// content did not follow the rules; these are log and audit codes of the PSP
+/// mint, since a refused kind 15 request gets no reply.
+pub const WRONG_TOTAL: &str = "wrong_total";
+/// The rules left nothing to issue (`due_units` is 0).
+pub const NOTHING_TO_ISSUE: &str = "nothing_to_issue";
+/// An output of a reconciliation is not a denomination of the mint.
+pub const UNKNOWN_DENOMINATION: &str = "unknown_denomination";
+/// A blind nonce appears twice in a request.
+pub const DUPLICATE_BLIND_NONCE: &str = "duplicate_blind_nonce";
+/// A blind nonce of a request was already signed.
+pub const BLIND_NONCE_USED: &str = "blind_nonce_used";
+/// The reconciliation's signature does not verify under its reply key.
+pub const BAD_SIGNATURE: &str = "bad_signature";
+/// No payment of the mint matches the reply key and purchase.
+pub const UNKNOWN_PAYMENT: &str = "unknown_payment";
+/// More than one payment matches the reply key and purchase.
+pub const AMBIGUOUS_PAYMENT: &str = "ambiguous_payment";
+/// The payment is forfeited, settled, or was never open.
+pub const PAYMENT_CLOSED: &str = "payment_closed";
+/// The payment has used its attempts (`max_attempts`).
+pub const TOO_MANY_ATTEMPTS: &str = "too_many_attempts";
 /// The same request is still being worked on.
 pub const IN_PROGRESS: &str = "in_progress";
 /// A mint this one depends on cannot be reached.

@@ -73,6 +73,12 @@ pub const KIND_PSP_DELIVERY: u8 = 13;
 /// is the [`crate::psp::PspSpendRequest`] JSON. The PSP mint burns the `pay` and
 /// signs the change.
 pub const KIND_PSP_SPEND: u8 = 14;
+/// The request kind of a PSP reconciliation: the corrected request or the credit
+/// claim for an open payment (held, rejected, or issued with a credit). The body
+/// is the [`crate::psp::ReconcileRequest`] JSON, signed by the purchase's reply
+/// key. The PSP mint answers only a request it accepts (`Served::Ignored` for
+/// every other outcome), so a refused request gets no reply.
+pub const KIND_PSP_RECONCILE: u8 = 15;
 /// The reply status of a request that was answered. The body is what the HTTP
 /// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;
@@ -458,6 +464,11 @@ pub enum Served {
     /// and this body, which is what the HTTP call would have returned with
     /// its 4xx.
     Refused(Vec<u8>),
+    /// Not answered at all: nothing is written to the reply cell, and the reason
+    /// is only for the mint's log. For a call whose refusals must not be told to
+    /// the asker (the PSP's reconciliation, kind 15: "no refusal replies"), and
+    /// for a failure the asker should meet by sending the identical request again.
+    Ignored(String),
 }
 
 /// Open one sealed cell from a mailbox slot and answer it, or say why it is
@@ -481,6 +492,7 @@ pub fn answer_request(
         Served::Body(body) => (STATUS_ANSWERED, body),
         Served::Unavailable => (STATUS_UNAVAILABLE, Vec::new()),
         Served::Refused(body) => (STATUS_REFUSED, body),
+        Served::Ignored(reason) => return Err(AirError(format!("not answered: {reason}"))),
     };
     let shared = addr::shared_mint(key, &r_key);
     let reply_cell = addr::reply_secret(&shared, &request.request_id, 0);
@@ -668,6 +680,25 @@ mod tests {
         assert_eq!(
             hex::encode(spend.hash()),
             "d5918db529455201216ad5745c2ad10a6a71d9a1089b469b99f100217a1fa136"
+        );
+    }
+
+    #[test]
+    fn golden_request_hash_for_the_psp_reconcile_kind() {
+        // Computed independently with hashlib: sha256("sp-air-req-v0" || kind ||
+        // request_id || R || body_len (4, BE) || body).
+        let (id, r) = (test_request().request_id, test_request().reply_key);
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_PSP_RECONCILE, id, r).hash()),
+            "ed20e84dcdf46285c80979ceb720f2ee0489dd5049cae8916f9726021e2bdb78"
+        );
+        let reconcile = WireRequest {
+            body: br#"{"outputs":[]}"#.to_vec(),
+            ..WireRequest::new(KIND_PSP_RECONCILE, id, r)
+        };
+        assert_eq!(
+            hex::encode(reconcile.hash()),
+            "2401d31cef4f63ace223affd9d63edb19deabc02506b876da1c3db7cc76585ea"
         );
     }
 
@@ -1226,6 +1257,23 @@ mod tests {
         // only the PSP spend skips the FSP's.
         let (_, sealed) = asked_with(KIND_FSP_SPEND, &body, &mint, &r);
         assert!(answer_request(&mint, &sealed, now_secs(), &serve).is_err());
+    }
+
+    #[test]
+    fn an_ignored_request_is_not_answered_and_writes_nothing() {
+        let mint = SecretKey::new();
+        let r = SecretKey::new();
+        let serve = |kind: u8, _: &[u8]| match kind {
+            KIND_PSP_RECONCILE => Some(Served::Ignored("wrong_total".to_string())),
+            _ => None,
+        };
+        let (_, sealed) = asked_with(KIND_PSP_RECONCILE, b"{}", &mint, &r);
+        // No answer is built, so there is no reply cell and no sealed reply to
+        // write; the reason is in the error, for the mint's log.
+        match answer_request(&mint, &sealed, now_secs(), &serve) {
+            Err(e) => assert!(e.0.contains("wrong_total"), "{e}"),
+            Ok(_) => panic!("an ignored request was answered"),
+        }
     }
 
     #[test]

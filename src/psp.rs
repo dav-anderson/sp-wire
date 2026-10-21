@@ -196,3 +196,150 @@ pub struct PspSpendResponse {
     /// `pay`, burned.
     pub paid: u64,
 }
+
+/// One signed output: the blind nonce the wallet asked for and the PSP's blind
+/// signature of it (the pairs `describe` logs). Used by the delivery record
+/// ([`crate::air_request::delivery::Signed`]) and by [`ReconcileResponse`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedOutput {
+    pub blind_nonce: String,
+    pub signature: String,
+}
+
+const RECONCILE_DIGEST_TAG: &[u8] = b"psp-mint/reconcile/v1";
+const RECONCILE_HASH_TAG: &[u8] = b"psp-mint/reconcile-request/v1";
+
+/// The corrected request or the credit claim of one purchase (AIR kind 15,
+/// `crate::air_request::KIND_PSP_RECONCILE`): the new blinded notes for a
+/// payment that is open (held, rejected, or issued with a credit). One kind
+/// covers both; the mint tells them apart by its record of the payment.
+///
+/// The request must follow the `rules` of the purchase's first delivery
+/// ([`crate::air_request::delivery::ReconcileRules`]): the outputs must add up
+/// to `due_units` exactly. The mint answers only a request it accepts; a
+/// refused one gets no reply.
+///
+/// **Who may ask.** AIR clients are anonymous (each connects with a one-off
+/// connection key), so the envelope names no sender. The proof of the right to
+/// claim is `signature`, a BIP340 signature by the purchase's one-off reply
+/// key over [`ReconcileRequest::digest`]: only the holder of the private half
+/// may claim the payment, and a public key, even one that only the payer and
+/// the PSP know, is never a secret. This matches the ESP's `service_signature`.
+/// The envelope's `R` is not checked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReconcileRequest {
+    /// The purchase's one-off reply key (33 bytes, 66 hex characters): the
+    /// `reply_did` of the payload, `Record.payer_did` at the mint.
+    pub reply_did: crate::ServiceDid,
+    /// The purchase id (32 bytes, 64 hex characters): `purchase_id` of the
+    /// unsealed payload, the `purchase` of the first delivery.
+    #[serde(with = "hex32")]
+    pub purchase: [u8; 32],
+    /// The keyset that signs the outputs: the current or the previous one, as in
+    /// a rollover (a set that is not live is refused).
+    pub keyset: String,
+    /// The new blinded notes.
+    pub outputs: Vec<MintOutput>,
+    /// BIP340 by `reply_did` over [`ReconcileRequest::digest`] (64 bytes, 128
+    /// hex characters).
+    #[serde(with = "hex_signature")]
+    pub signature: secp256k1::schnorr::Signature,
+}
+
+impl ReconcileRequest {
+    /// What the signature covers: `sha256("psp-mint/reconcile/v1" || reply_did
+    /// (33) || purchase (32) || u32 len(keyset) || keyset || u32 count || each
+    /// output: amount u64 || blind nonce (33))`, all integers big-endian.
+    pub fn digest(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(RECONCILE_DIGEST_TAG);
+        h.update(self.reply_did.as_bytes());
+        h.update(self.purchase);
+        h.update(
+            u32::try_from(self.keyset.len())
+                .unwrap_or(u32::MAX)
+                .to_be_bytes(),
+        );
+        h.update(self.keyset.as_bytes());
+        h.update(
+            u32::try_from(self.outputs.len())
+                .unwrap_or(u32::MAX)
+                .to_be_bytes(),
+        );
+        for o in &self.outputs {
+            h.update(o.amount.units.to_be_bytes());
+            h.update(o.blind_nonce.0.serialize());
+        }
+        h.finalize().into()
+    }
+
+    /// The key stored answers and counted refusals are kept under: the whole
+    /// body, signature included, `sha256("psp-mint/reconcile-request/v1" ||
+    /// digest || signature (64))`. A resend of the same request has the same
+    /// hash.
+    pub fn hash(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(RECONCILE_HASH_TAG);
+        h.update(self.digest());
+        h.update(self.signature.as_ref());
+        hex::encode(h.finalize())
+    }
+}
+
+/// The answer to an accepted [`ReconcileRequest`]: the mint's signed reply, the
+/// follow-up record, written once to the request's reply cell and sealed to the
+/// request's `R` (the purchase's reply key). A refused request gets no answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReconcileResponse {
+    /// The keyset that signed.
+    pub keyset: String,
+    /// One pair per output, in the order of the request.
+    pub signatures: Vec<SignedOutput>,
+    /// The live keysets, so the wallet can unblind from this reply alone.
+    pub keysets: KeysetsResponse,
+    /// The total signed, in PSP units.
+    pub issued_units: u64,
+    /// The reconciliation fee taken.
+    pub fee_units: u64,
+    /// The read cost prepaid for this reply.
+    pub read_prepaid_units: u64,
+    /// The one write prepaid for this payment.
+    pub write_prepaid_units: u64,
+    /// The credit rounding remainder the PSP keeps (0 to 9 cents).
+    pub kept_cents: u64,
+    /// The cents the PSP gives away by rounding a credit up (0 to 9).
+    pub given_cents: u64,
+}
+
+mod hex32 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&hex::encode(v))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
+        let text = String::deserialize(d)?;
+        let bytes = hex::decode(&text).map_err(serde::de::Error::custom)?;
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("expected 32 bytes of hex"))
+    }
+}
+
+mod hex_signature {
+    use secp256k1::schnorr::Signature;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Signature, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&hex::encode(v.as_ref()))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Signature, D::Error> {
+        let text = String::deserialize(d)?;
+        let bytes = hex::decode(&text).map_err(serde::de::Error::custom)?;
+        Signature::from_slice(&bytes).map_err(serde::de::Error::custom)
+    }
+}

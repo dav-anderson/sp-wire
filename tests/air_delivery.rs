@@ -31,6 +31,7 @@ fn signed() -> Outcome {
         skipped_units: 0,
         credit_cents: 0,
         open_until: 0,
+        rules: None,
     })
 }
 
@@ -100,6 +101,7 @@ async fn a_held_read_gets_the_record_when_it_arrives() {
         paid_sats: 5_000,
         paid_cents: 500,
         open_until: 1_000,
+        rules: None,
     });
     let built = build_record(&psp_key, &reply, &purchase, &outcome, addr::now_secs()).unwrap();
 

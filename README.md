@@ -115,7 +115,10 @@ envelope again: its `GET /health`, `/keys`, `/fees` and `/rotation` are kinds 1,
 and 4, and it adds `KIND_FSP_ISSUE` 11 (`POST /issue`) and `KIND_FSP_SPEND` 12
 (`POST /spend`), JSON bodies. The PSP mint adds `KIND_PSP_SPEND` 14 (a spend with
 change: notes in, change out, an amount paid that the mint burns; JSON body,
-`psp::PspSpendRequest`). The envelope does not read a body.
+`psp::PspSpendRequest`) and `KIND_PSP_RECONCILE` 15 (the corrected request or the
+credit claim for an open payment; JSON body, `psp::ReconcileRequest`, signed by the
+purchase's reply key; the PSP answers only a request it accepts, see `Served::Ignored`).
+The envelope does not read a body.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
 request into a numbered mailbox of the mint's DID (anyone can write a slot, only
@@ -157,6 +160,19 @@ forge one. It rides `WIRE_VERSION` 3, with no bump.
   is found stored), `read_record` and `read_records` (every address once, then the
   missing ones held together under one deadline). `KIND_PSP_DELIVERY` (13) is a hash
   domain only and is never served. See `air-sandbox/REQUEST-DESIGN.md` section 18.
+  **The first delivery states the rules.** A record that opens a reconciliation window
+  (a held payment, a rejection with a readable payload, a purchase signed with a
+  credit) carries `rules` (`ReconcileRules`): `send` (`corrected_request` or
+  `credit_claim`), `kind` 15, the exact `due_units` the request's outputs must add up
+  to after every fee, the fee and prepaid read and write costs, `open_until`,
+  `max_attempts`, and `on_failure` (`FORFEIT_NOTICE`: if reconciliation fails or is not
+  done by `open_until`, the payment is forfeited and the funds are lost; a refused
+  request gets no reply). The rules are a fallback for a fallback: ecash-wallet
+  reconciles automatically, checks its request against them before sending, and should
+  never fail. They are written out for a developer or user who buys PSP with
+  nonstandard, self-built tooling, as one last chance to get it right before the funds
+  are lost. They are those in force when the window opened, and absent (`None`) on a
+  closed purchase and in a record written before they existed.
 - **Port 5702.** The AIR client always dials 5702 for `ws` (upstream item 12), so a
   test server cannot take a free port: `local_server::start` needs it free and says
   so when it is not. Test binaries run one after another, so each finds it free.

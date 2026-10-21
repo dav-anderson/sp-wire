@@ -43,6 +43,19 @@
 //! closed, and after the window the PSP keeps the payment. A wallet checks a
 //! record with [`open_record`].
 //!
+//! **The rules are in the first delivery.** A record that opens a window carries
+//! `rules` ([`ReconcileRules`]): what one request must look like to settle the
+//! payment (the exact total of the outputs, the fees, the deadline, the number
+//! of attempts) and what happens if it does not. The holder of the purchase's
+//! reply key then sends one request over AIR (kind 15, `psp::ReconcileRequest`)
+//! that follows them; the PSP signs the notes and closes the payment, and
+//! answers nothing else. The rules are a fallback for a fallback: a wallet
+//! reconciles automatically and checks its request against them before it
+//! sends, so it should never fail. They are written out for a developer or a
+//! user who buys PSP with nonstandard, self-built tooling, as one last chance to
+//! get it right before the funds are lost. They are fixed when the window opens;
+//! a later change of the PSP's settings does not change them.
+//!
 //! **No freshness check.** The record is write-once and the wallet may read it
 //! days after the PSP wrote it, so [`open_record`] takes any `issued_at`; the
 //! signature and the question's hash are what bind it.
@@ -57,6 +70,7 @@ use super::envelope::{
 };
 use crate::ServiceDid;
 use crate::psp::KeysetsResponse;
+pub use crate::psp::SignedOutput;
 use crate::seal::{PublicKey, SecretKey};
 
 /// Label of the delivery address (REQUEST-DESIGN.md section 18).
@@ -96,13 +110,58 @@ pub fn question(purchase: &[u8; 32], reply: &ServiceDid) -> WireRequest {
     WireRequest::new(KIND_PSP_DELIVERY, *purchase, *reply.as_bytes())
 }
 
-/// One signed output: the blind nonce the wallet asked for and the PSP's blind
-/// signature of it (the pairs `describe` logs).
+/// What the PSP says in the first delivery about reconciling the payment. Set
+/// exactly when the record opens a window: a payment that is held, a purchase
+/// that was rejected with a readable payload, and a purchase that was signed
+/// with a credit owed. `None` when the purchase is closed.
+///
+/// **Why the rules are written out.** They are a fallback for a fallback.
+/// ecash-wallet reconciles automatically, checks its request against these rules
+/// before sending, and should never fail. They are spelled out for a developer
+/// or user who buys PSP with nonstandard, self-built tooling, as one last chance
+/// to get it right before the funds are lost.
+///
+/// The values are those in force when the window opened (the fees, the cap and
+/// the rounding cutoff of the PSP's settings at that moment) and are kept with
+/// the payment: the PSP checks a request against these, never against its
+/// current settings. `due_units` is an exact whole number of PSP units with no
+/// dollar or bitcoin price in it: the price tolerance applies only when the
+/// bitcoin payment is first assessed, never to a reconciliation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SignedOutput {
-    pub blind_nonce: String,
-    pub signature: String,
+pub struct ReconcileRules {
+    /// What to send: [`SEND_CORRECTED_REQUEST`] (the payment was held or the
+    /// purchase rejected) or [`SEND_CREDIT_CLAIM`] (the purchase was signed and
+    /// a credit is owed).
+    pub send: String,
+    /// The AIR request kind to send it as (`KIND_PSP_RECONCILE`, 15).
+    pub kind: u8,
+    /// The exact total of the outputs the request must carry, after every fee.
+    /// The PSP signs the request whole or not at all: no partial fill.
+    pub due_units: u64,
+    /// The reconciliation fee taken, in PSP units.
+    pub reconciliation_fee_units: u64,
+    /// The read costs the PSP prepays: the first record and the follow-up.
+    pub read_prepaid_units: u64,
+    /// The cost of one kind 15 write, prepaid by the SPI on the wallet's behalf.
+    /// The SPI absorbs the cost of a second attempt.
+    pub write_prepaid_units: u64,
+    /// The deadline (Unix seconds, the PSP's clock): the same value as the
+    /// body's `open_until`. No request is accepted after it.
+    pub open_until: u64,
+    /// How many requests the PSP counts: a request signed by the right reply key,
+    /// for this open payment, refused for its content, with a new hash.
+    pub max_attempts: u32,
+    /// [`FORFEIT_NOTICE`].
+    pub on_failure: String,
 }
+
+/// [`ReconcileRules::send`] for a payment that was held or a purchase that was
+/// rejected.
+pub const SEND_CORRECTED_REQUEST: &str = "corrected_request";
+/// [`ReconcileRules::send`] for a purchase that was signed with a credit owed.
+pub const SEND_CREDIT_CLAIM: &str = "credit_claim";
+/// [`ReconcileRules::on_failure`]: what happens if reconciliation fails.
+pub const FORFEIT_NOTICE: &str = "If reconciliation fails, or is not done by open_until, the payment is forfeited and the funds are lost. A refused request gets no reply.";
 
 /// The body of an answered record: the purchase was settled and these outputs
 /// were signed.
@@ -122,7 +181,7 @@ pub struct Signed {
     pub skipped_units: u64,
     /// An overpayment beyond the reconciliation target, in USD cents, that the
     /// PSP owes the payer. While it is above 0 the purchase is not closed: a
-    /// follow-up will settle it (not built yet).
+    /// credit claim (kind 15) settles it.
     #[serde(default)]
     pub credit_cents: u64,
     /// When the credit stops being owed (Unix seconds, the PSP's clock): the end
@@ -130,11 +189,15 @@ pub struct Signed {
     /// 0 when nothing is owed.
     #[serde(default)]
     pub open_until: u64,
+    /// How to claim the credit; set exactly when `credit_cents` is above 0.
+    /// Absent in a record written before the claim existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<ReconcileRules>,
 }
 
 /// The body of a record for a purchase that was rejected: nothing was signed. The
 /// purchase is not closed: it stays open until `open_until`, so the payer can
-/// correct it (that exchange is not built yet), and the PSP keeps the payment if
+/// correct it (a corrected request, kind 15), and the PSP keeps the payment if
 /// it is not corrected by then.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refused {
@@ -148,6 +211,9 @@ pub struct Refused {
     /// The end of the reconciliation window (Unix seconds, the PSP's clock).
     #[serde(default)]
     pub open_until: u64,
+    /// How to correct the purchase; set when `open_until` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<ReconcileRules>,
 }
 
 /// The body of a record for a payment that is held: valid, but short by more than
@@ -166,6 +232,9 @@ pub struct Held {
     pub over_under_bps: i64,
     /// The end of the reconciliation window (Unix seconds, the PSP's clock).
     pub open_until: u64,
+    /// How to correct the payment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<ReconcileRules>,
 }
 
 /// What a record says.
@@ -189,6 +258,15 @@ impl Outcome {
             Outcome::Held(h) => h.open_until,
         };
         (until > 0).then_some(until)
+    }
+
+    /// The rules of the reconciliation this record opens, when it opens one.
+    pub fn rules(&self) -> Option<&ReconcileRules> {
+        match self {
+            Outcome::Signed(s) => s.rules.as_ref(),
+            Outcome::Refused(r) => r.rules.as_ref(),
+            Outcome::Held(h) => h.rules.as_ref(),
+        }
     }
 }
 
@@ -489,6 +567,7 @@ mod tests {
             skipped_units: 2,
             credit_cents: 0,
             open_until: 0,
+            rules: None,
         })
     }
 
@@ -538,6 +617,7 @@ mod tests {
             paid_sats: 5_000,
             paid_cents: 500,
             open_until: 1_700_604_800,
+            rules: None,
         });
         let built = build_record(&p.psp_key, &p.reply, &p.purchase, &outcome, 5).unwrap();
         let opened = open_record(&p.reply_key, &p.psp, &p.purchase, &built.sealed).unwrap();
@@ -555,6 +635,7 @@ mod tests {
             requested_units: 5,
             over_under_bps: -4_000,
             open_until: 1_700_604_800,
+            rules: None,
         });
         let built = build_record(&p.psp_key, &p.reply, &p.purchase, &outcome, 5).unwrap();
         // a held payment is a refusal-status record that is not a rejection
@@ -694,5 +775,99 @@ mod tests {
             (signed.skipped_units, signed.credit_cents, signed.open_until),
             (0, 0, 0)
         );
+    }
+
+    // ---- the rules
+
+    fn rules() -> ReconcileRules {
+        ReconcileRules {
+            send: SEND_CORRECTED_REQUEST.to_string(),
+            kind: crate::air_request::envelope::KIND_PSP_RECONCILE,
+            due_units: 25,
+            reconciliation_fee_units: 2,
+            read_prepaid_units: 2,
+            write_prepaid_units: 1,
+            open_until: 1_700_000_000,
+            max_attempts: 2,
+            on_failure: FORFEIT_NOTICE.to_string(),
+        }
+    }
+
+    #[test]
+    fn the_rules_are_pinned_and_round_trip() {
+        // Written by hand from the field list, not from the code.
+        let json = concat!(
+            r#"{"send":"corrected_request","kind":15,"due_units":25,"#,
+            r#""reconciliation_fee_units":2,"read_prepaid_units":2,"#,
+            r#""write_prepaid_units":1,"open_until":1700000000,"max_attempts":2,"#,
+            r#""on_failure":"If reconciliation fails, or is not done by open_until, "#,
+            r#"the payment is forfeited and the funds are lost. A refused request gets no reply."}"#
+        );
+        assert_eq!(serde_json::to_string(&rules()).unwrap(), json);
+        assert_eq!(
+            serde_json::from_str::<ReconcileRules>(json).unwrap(),
+            rules()
+        );
+        assert_eq!(SEND_CREDIT_CLAIM, "credit_claim");
+        assert_eq!(rules().on_failure, FORFEIT_NOTICE);
+    }
+
+    #[test]
+    fn a_body_with_no_rules_reads_as_none_and_is_written_without_the_field() {
+        // A kind 13 body from before the rules existed.
+        let held = br#"{"reason":"r","paid_sats":1,"paid_cents":2,"requested_units":3,"over_under_bps":-4,"open_until":5}"#;
+        let held: Held = serde_json::from_slice(held).unwrap();
+        assert_eq!(held.rules, None);
+        let refused: Refused = serde_json::from_slice(br#"{"reason":"r"}"#).unwrap();
+        assert_eq!(refused.rules, None);
+        // Nothing is written for a closed purchase, so its bytes are as they were.
+        assert!(!serde_json::to_string(&held).unwrap().contains("rules"));
+        assert!(!serde_json::to_string(&refused).unwrap().contains("rules"));
+        match signed() {
+            Outcome::Signed(s) => assert!(!serde_json::to_string(&s).unwrap().contains("rules")),
+            _ => unreachable!(),
+        }
+        assert_eq!(signed().rules(), None);
+    }
+
+    #[test]
+    fn the_rules_ride_in_each_record_that_opens_a_window() {
+        let p = parties();
+        let held = Outcome::Held(Held {
+            reason: "short".into(),
+            paid_sats: 300,
+            paid_cents: 30,
+            requested_units: 5,
+            over_under_bps: -4_000,
+            open_until: 1_700_000_000,
+            rules: Some(rules()),
+        });
+        let refused = Outcome::Refused(Refused {
+            reason: "x".into(),
+            paid_sats: 1,
+            paid_cents: 1,
+            open_until: 1_700_000_000,
+            rules: Some(rules()),
+        });
+        let mut credit = match signed() {
+            Outcome::Signed(s) => s,
+            _ => unreachable!(),
+        };
+        credit.credit_cents = 12;
+        credit.open_until = 1_700_000_000;
+        let mut claim = rules();
+        claim.send = SEND_CREDIT_CLAIM.to_string();
+        credit.rules = Some(claim.clone());
+        let credit = Outcome::Signed(credit);
+        for (outcome, want) in [(held, rules()), (refused, rules()), (credit, claim)] {
+            let built = build_record(&p.psp_key, &p.reply, &p.purchase, &outcome, 5).unwrap();
+            let opened = open_record(&p.reply_key, &p.psp, &p.purchase, &built.sealed).unwrap();
+            assert_eq!(opened.outcome, outcome);
+            assert_eq!(opened.outcome.rules(), Some(&want));
+            assert_eq!(
+                opened.outcome.rules().map(|r| r.open_until),
+                opened.outcome.open_until()
+            );
+        }
     }
 }
