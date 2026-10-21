@@ -69,6 +69,10 @@ pub const KIND_FSP_SPEND: u8 = 12;
 /// sent and never served: the record answers a question that is computed, not
 /// asked (see [`super::delivery`]).
 pub const KIND_PSP_DELIVERY: u8 = 13;
+/// The request kind of a PSP spend with change (`POST /spend` of the PSP): the body
+/// is the [`crate::psp::PspSpendRequest`] JSON. The PSP mint burns the `pay` and
+/// signs the change.
+pub const KIND_PSP_SPEND: u8 = 14;
 /// The reply status of a request that was answered. The body is what the HTTP
 /// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;
@@ -649,6 +653,25 @@ mod tests {
     }
 
     #[test]
+    fn golden_request_hash_for_the_psp_spend_kind() {
+        // Computed independently with hashlib: sha256("sp-air-req-v0" || kind ||
+        // request_id || R || body_len (4, BE) || body).
+        let (id, r) = (test_request().request_id, test_request().reply_key);
+        assert_eq!(
+            hex::encode(WireRequest::new(KIND_PSP_SPEND, id, r).hash()),
+            "e2f19cbb1249d6a7cd053d7d54077740592997d9891e62e922a91f6b75709223"
+        );
+        let spend = WireRequest {
+            body: br#"{"inputs":[]}"#.to_vec(),
+            ..WireRequest::new(KIND_PSP_SPEND, id, r)
+        };
+        assert_eq!(
+            hex::encode(spend.hash()),
+            "d5918db529455201216ad5745c2ad10a6a71d9a1089b469b99f100217a1fa136"
+        );
+    }
+
+    #[test]
     fn golden_request_hash_with_a_body() {
         // The body and its length (4 bytes) are in the hash.
         let (id, r) = (test_request().request_id, test_request().reply_key);
@@ -1179,6 +1202,29 @@ mod tests {
         }
         // An ESP kind is skipped by a mint that serves only the FSP's two.
         let (_, sealed) = asked_with(KIND_EXCHANGE, b"{}", &mint, &r);
+        assert!(answer_request(&mint, &sealed, now_secs(), &serve).is_err());
+    }
+
+    #[test]
+    fn the_psp_spend_kind_carries_its_body_both_ways() {
+        let mint = SecretKey::new();
+        let did = addr::key_to_did(&mint.public_key());
+        let r = SecretKey::new();
+        let serve = |kind: u8, body: &[u8]| match kind {
+            KIND_PSP_SPEND => Some(Served::Body(body.to_vec())),
+            _ => None,
+        };
+        let body = br#"{"inputs":[],"outputs":[],"pay":1,"memo":"x"}"#.to_vec();
+        let (request, sealed) = asked_with(KIND_PSP_SPEND, &body, &mint, &r);
+        let answer = answer_request(&mint, &sealed, now_secs(), &serve).unwrap();
+        assert_eq!(answer.request.body, body);
+        let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+        let reply = verify_answer(&plain, &did, &request, now_secs(), 300).unwrap();
+        assert_eq!(reply.status, STATUS_ANSWERED);
+        assert_eq!(reply.body, body);
+        // The same body under another kind is another question: a mint that serves
+        // only the PSP spend skips the FSP's.
+        let (_, sealed) = asked_with(KIND_FSP_SPEND, &body, &mint, &r);
         assert!(answer_request(&mint, &sealed, now_secs(), &serve).is_err());
     }
 

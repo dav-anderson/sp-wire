@@ -11,7 +11,7 @@ use sp_wire::keyset::{KEYSET_LEN, KeysetWindow, RotationResponse, keyset_id};
 use sp_wire::payload::{self, DID_LEN, Payload};
 use sp_wire::psp::{
     Burn, BurnsRequest, BurnsResponse, KeysetsResponse, MeltRequest, PspMeltRequest,
-    RolloverRequest, RolloverResponse,
+    PspSpendRequest, PspSpendResponse, RolloverRequest, RolloverResponse,
 };
 
 const GOLDEN: &str = include_str!("golden/psp.txt");
@@ -74,6 +74,7 @@ fn the_psp_wire_bytes_are_unchanged() {
     line("DID_LEN", DID_LEN);
     line("KEYSET_LEN", KEYSET_LEN);
     line("MAX_ROLLOVER_NOTES", sp_wire::psp::MAX_ROLLOVER_NOTES);
+    line("MAX_SPEND_MEMO_BYTES", sp_wire::psp::MAX_SPEND_MEMO_BYTES);
 
     // The mint-core types as they serialize.
     json("MintInput", &input(4, 30));
@@ -138,6 +139,30 @@ fn the_psp_wire_bytes_are_unchanged() {
             epoch: 3,
             outcomes: vec![MintOutputOutcome(key(80)), MintOutputOutcome(key(81))],
             keys: vec![key(82), key(83)],
+        },
+    );
+
+    // PSP spend with change: the request, the digest every input signs, the hash
+    // a stored answer is keyed by, and the response.
+    let spend = PspSpendRequest {
+        input_keysets: vec!["0102030405060708".into(), "1112131415161718".into()],
+        inputs: vec![input(4, 120), input(2, 122)],
+        keyset: "2122232425262728".into(),
+        outputs: vec![output(4, 130)],
+        pay: 2,
+        memo: "memo".into(),
+    };
+    json("PspSpendRequest", &spend);
+    line("PspSpendRequest_digest", hex::encode(spend.digest()));
+    line("PspSpendRequest_hash", spend.hash());
+    json(
+        "PspSpendResponse",
+        &PspSpendResponse {
+            keyset: "2122232425262728".into(),
+            epoch: 3,
+            outcomes: vec![MintOutputOutcome(key(140))],
+            keys: vec![key(141)],
+            paid: 2,
         },
     );
 

@@ -2,6 +2,13 @@
 
 ## 0.5.0 (unreleased)
 
+**The PSP's spend with change over AIR (unreleased).**
+
+- **New: `KIND_PSP_SPEND` (14).** A PSP spend with change (`POST /spend` of the PSP mint), modelled on the FSP's spend (kind 12). The body is the JSON of the new `psp::PspSpendRequest`, the reply body `psp::PspSpendResponse`; a refusal is a signed `STATUS_REFUSED` as for the other kinds. No `WIRE_VERSION` bump: no existing byte changes, and a mint that does not serve kind 14 skips it like any unknown kind.
+- **New: `psp::PspSpendRequest`** (`input_keysets`, `inputs`, `keyset` for the change, `outputs`, `pay`, `memo`) with `digest()` (what every input signs, tag `psp-mint/spend/v1`, covers `pay`, the memo, the change's keyset, every input's keyset, amount and nonce, and every output; all length-prefixed) and `hash()` (tag `psp-mint/spend-request/v1`: the digest, every spend signature and every note signature). **`psp::PspSpendResponse`** (`keyset`, `epoch`, `outcomes`, `keys`, `paid`). `psp::MAX_SPEND_MEMO_BYTES` (256) and `codes::NOTHING_TO_PAY` (`nothing_to_pay`, a spend that pays 0).
+- Tests: goldens for the request, its digest and hash and the response, and for the kind's request hash with and without a body (all computed independently with `hashlib`, whose method also reproduces the existing rollover and FSP spend goldens); the kind carries its body both ways, and a mint that serves only it skips the FSP's kind.
+- Docs: README, DESIGN.
+
 **The PSP's delivery of a purchase over AIR (unreleased).**
 
 - **A held payment is delivered too, and a window comes with every unsettled one.** `Outcome::Held(Held { reason, paid_sats, paid_cents, requested_units, over_under_bps, open_until })` is new, beside `Signed` and `Refused`. `Refused` gained `paid_sats`, `paid_cents` and `open_until`, `Signed` gained `open_until` (a credit's window), all `serde(default)`. Both unsigned outcomes travel as `STATUS_REFUSED` with a body tagged `"kind": "rejected"` or `"held"`; the envelope is unchanged. `Outcome::open_until()` returns the end of the window or none. A `Refused` body without the tag is no longer accepted: this was not released before.

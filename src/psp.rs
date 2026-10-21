@@ -92,3 +92,107 @@ pub struct RolloverResponse {
     /// The public key each output was signed with, for unblinding.
     pub keys: Vec<PublicKey>,
 }
+
+/// The longest memo of a PSP spend, in bytes (the same default as fsp-mint's
+/// `spend.max_memo_bytes`).
+pub const MAX_SPEND_MEMO_BYTES: usize = 256;
+
+/// A PSP spend with change (AIR kind 14, [`crate::air_request::KIND_PSP_SPEND`]):
+/// notes in, change out, an amount paid, and a memo. The inputs are worth the
+/// change plus `pay`, exactly. `pay` is not reissued: the PSP mint burns it,
+/// and it is the SPI's revenue. With `pay` 0 this would be a rollover, and the
+/// mint refuses it (`nothing_to_pay`).
+///
+/// It is fsp-mint's [`crate::fsp::SpendRequest`] with a PSP rollover's shape:
+/// each input names its keyset in `input_keysets` (the mint verifies a note, and
+/// looks it up in the spent list, of the keyset it names), and the change is
+/// signed with the one live keyset `keyset` names, the current or the previous.
+/// Every input signs [`PspSpendRequest::digest`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PspSpendRequest {
+    /// The keyset of each input note, in order.
+    #[serde(default)]
+    pub input_keysets: Vec<String>,
+    pub inputs: Vec<MintInput>,
+    /// The keyset the change is to be signed with: the current or the previous
+    /// one (a set that is not live is refused).
+    #[serde(default)]
+    pub keyset: String,
+    /// The change: new notes for the payer.
+    pub outputs: Vec<MintOutput>,
+    /// What is paid, in PSP units. Burned, never reissued.
+    pub pay: u64,
+    #[serde(default)]
+    pub memo: String,
+}
+
+const SPEND_DIGEST_TAG: &[u8] = b"psp-mint/spend/v1";
+const SPEND_HASH_TAG: &[u8] = b"psp-mint/spend-request/v1";
+
+impl PspSpendRequest {
+    /// What every input's spend signature covers: `pay`, the memo, the keyset the
+    /// change is signed with, every input's keyset, amount and nonce, and every
+    /// output's amount and blind nonce. Every variable-length field and every
+    /// list carries its length, so no two different requests share a digest.
+    ///
+    /// It differs from fsp-mint's spend digest in covering the change's keyset
+    /// (fsp-mint always signs with its current set) and in length-prefixing the
+    /// input keysets.
+    pub fn digest(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(SPEND_DIGEST_TAG);
+        h.update(self.pay.to_be_bytes());
+        h.update((self.memo.len() as u64).to_be_bytes());
+        h.update(self.memo.as_bytes());
+        h.update((self.keyset.len() as u64).to_be_bytes());
+        h.update(self.keyset.as_bytes());
+        h.update((self.input_keysets.len() as u64).to_be_bytes());
+        for k in &self.input_keysets {
+            h.update((k.len() as u64).to_be_bytes());
+            h.update(k.as_bytes());
+        }
+        h.update((self.inputs.len() as u64).to_be_bytes());
+        for i in &self.inputs {
+            h.update(i.amount.units.to_be_bytes());
+            h.update(i.note.nonce.0.serialize());
+        }
+        h.update((self.outputs.len() as u64).to_be_bytes());
+        for o in &self.outputs {
+            h.update(o.amount.units.to_be_bytes());
+            h.update(o.blind_nonce.0.serialize());
+        }
+        h.finalize().into()
+    }
+
+    /// The key the answer is stored under: the digest, every spend signature and
+    /// every note signature. A retry sends the same request and gets the same
+    /// stored answer.
+    pub fn hash(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(SPEND_HASH_TAG);
+        h.update(self.digest());
+        for i in &self.inputs {
+            h.update(i.spend_signature.as_ref());
+        }
+        for i in &self.inputs {
+            h.update(i.note.signature.serialize());
+        }
+        hex::encode(h.finalize())
+    }
+}
+
+/// The answer to a [`PspSpendRequest`]: the change signed, and what was paid.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PspSpendResponse {
+    /// The keyset that signed the change.
+    pub keyset: String,
+    pub epoch: u64,
+    /// One blind signature per change output, in order.
+    pub outcomes: Vec<MintOutputOutcome>,
+    /// The public key each output was signed with, for unblinding.
+    pub keys: Vec<PublicKey>,
+    /// `pay`, burned.
+    pub paid: u64,
+}

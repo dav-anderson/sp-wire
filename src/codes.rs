@@ -30,6 +30,9 @@ pub const MALFORMED_REQUEST: &str = "malformed_request";
 pub const REQUEST_TOO_LARGE: &str = "request_too_large";
 /// The paid and requested amounts are not equal.
 pub const NOT_EXACT: &str = "not_exact";
+/// A PSP spend with `pay` 0 pays nothing: it would only move notes between
+/// keysets, which is a rollover.
+pub const NOTHING_TO_PAY: &str = "nothing_to_pay";
 /// The same request is still being worked on.
 pub const IN_PROGRESS: &str = "in_progress";
 /// A mint this one depends on cannot be reached.

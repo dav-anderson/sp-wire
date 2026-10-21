@@ -155,6 +155,24 @@ matters for this crate:
   `/keys`, `/fees` and `/rotation` are 1, 2, 7 and 4, and the DID asked (the service's)
   decides whose reply it is. No `WIRE_VERSION` bump.
 
+- **The PSP's spend is kind 14.** `KIND_PSP_SPEND` (14, a spend with change at the PSP
+  mint) is a constant, as 11 and 12 are, and its body is `psp::PspSpendRequest` JSON.
+  The request is fsp-mint's spend (`fsp::SpendRequest`) in a PSP rollover's shape: each
+  input names its keyset (`input_keysets`, as `RolloverRequest` does), and the change is
+  signed by the one live keyset `keyset` names, current or previous. Every input signs
+  `PspSpendRequest::digest()` (tag `psp-mint/spend/v1`: `pay`, the memo, the change's
+  keyset, every input's keyset, amount and nonce, every output's amount and blind
+  nonce, every list and string length-prefixed). It differs from the FSP's digest in
+  covering the change's keyset (fsp-mint always signs with its current set, so its
+  digest has no such field) and in length-prefixing the input keysets, which the FSP's
+  digest leaves bare. `hash()` (tag `psp-mint/spend-request/v1`: the digest, every
+  spend signature and every note signature) is the key a stored answer is filed under.
+  The response is the rollover's (`keyset`, `epoch`, `outcomes`, `keys`) plus `paid`.
+  `pay` is the SPI's revenue and is never reissued; the amounts must add up, inputs =
+  change + pay, and a `pay` of 0 is a rollover and is refused (`nothing_to_pay`). No
+  `WIRE_VERSION` bump: nothing that exists is re-encoded, and a mint that does not know
+  kind 14 skips it like any unknown kind.
+
 - **The ESP's calls are more kinds, not more envelope (7 to 10).** `KIND_FEES` (7),
   `KIND_EXCHANGE` (8), `KIND_TRANSFER` (9) and `KIND_REDEEM` (10) are constants and
   nothing else: `answer_request` hands the kind and the body to the mint's `serve`

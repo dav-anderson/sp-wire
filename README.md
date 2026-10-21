@@ -18,7 +18,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `keyset` | the key-set ID (8 bytes, 16 hex characters), the PSP's `keyset_id`, `KeysetWindow`, `RotationResponse` (`GET /rotation`) |
 | `payload` | the PSP OP_RETURN payload: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
 | `seal` | the sealed payload's format (a constant 80 bytes of overhead: the 64-byte sender key and the 16-byte tag) and, with the `seal` feature, `encrypt`, `decrypt`, `parse_public_key` |
-| `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response` |
+| `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response` |
 | `esp` | `exchange`, `transfer`, `redeem` (the binary request and its reply), `rollover`, `queue` views, `terms`, `hash_keysets` |
 | `fsp` | `IssueRequest`/`Response`, `SpendRequest`/`Response`, `KeysResponse`, `FeesResponse`, `Refusal` |
 | `codes` | the `code` of an error body: `keyset_retired`, `unknown_keyset`, `keyset_not_current` (reserved: no mint sends it), `burn_not_proven`, `note_spent_elsewhere`, ... |
@@ -113,7 +113,9 @@ the redeem body is the canonical binary encoding, not JSON). The ESP has no keys
 route, so it skips `KIND_KEYS`. The FSP mint's wallet-facing calls are the same
 envelope again: its `GET /health`, `/keys`, `/fees` and `/rotation` are kinds 1, 2, 7
 and 4, and it adds `KIND_FSP_ISSUE` 11 (`POST /issue`) and `KIND_FSP_SPEND` 12
-(`POST /spend`), JSON bodies. The envelope does not read a body.
+(`POST /spend`), JSON bodies. The PSP mint adds `KIND_PSP_SPEND` 14 (a spend with
+change: notes in, change out, an amount paid that the mint burns; JSON body,
+`psp::PspSpendRequest`). The envelope does not read a body.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
 request into a numbered mailbox of the mint's DID (anyone can write a slot, only
