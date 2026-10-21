@@ -25,7 +25,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
-| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, and its rollover and check-state (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
+| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, its rollover and check-state, and the PSP's delivery of a purchase (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
@@ -137,6 +137,24 @@ forge one. It rides `WIRE_VERSION` 3, with no bump.
   version and network: read the reply cell first, write a request into the first
   free slot, wait, retry with the same `request_id` and `r`, verify), and
   `local_server`, an `air_server` started in the test process.
+- **The delivery of a purchase (`air_request::delivery`).** The one call that goes
+  the other way: the PSP writes, the wallet reads. After it settles a payment the
+  PSP writes **one record** to the SPI's AIR server holding the purchase's
+  signatures and the PSP's live keysets, or that it holds the payment (`Held`), or
+  the reason it rejected the purchase (`Refused`), the last two with what it
+  received and until when it keeps the payment open (`open_until`), signed by
+  its DID key and sealed to the purchase's one-off reply DID. The address is
+  `sha256("sp-air-delivery-v0" || PSP DID || reply DID || purchase)`, where
+  `purchase = sha256("sp-psp-purchase-v0" || the unsealed payload)` (`purchase_id`,
+  `delivery_address`, `delivery_secret`); only the wallet and the PSP can compute
+  it, and the cell is write-once. `build_record` makes the sealed record and
+  `open_record` checks it (the PSP's signature, that it answers this purchase and
+  this reply DID; no freshness limit, since it may be read days later). With
+  `air-client`, `write_record` (`Created`, `AlreadyStored` or `Different`: a write to
+  a taken cell is answered as a read, so an unacknowledged write that got through
+  is found stored), `read_record` and `read_records` (every address once, then the
+  missing ones held together under one deadline). `KIND_PSP_DELIVERY` (13) is a hash
+  domain only and is never served. See `air-sandbox/REQUEST-DESIGN.md` section 18.
 - **Port 5702.** The AIR client always dials 5702 for `ws` (upstream item 12), so a
   test server cannot take a free port: `local_server::start` needs it free and says
   so when it is not. Test binaries run one after another, so each finds it free.

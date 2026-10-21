@@ -32,6 +32,10 @@
 //! - [`envelope`] (feature `air-request`): the request and reply envelopes, the
 //!   mint's side of answering ([`answer_mint_info`]), the wallet's checks
 //!   ([`verify_reply`]) and [`MintInfo`]. Pure.
+//! - [`delivery`] (feature `air-request`): the PSP's delivery of one purchase, the
+//!   signatures or the rejection as one record at an address the wallet can
+//!   compute (REQUEST-DESIGN.md section 18). Pure, with transport helpers
+//!   (`write_record`, `read_record`) under `air-client`.
 //! - `client` (feature `air-client`): the thin transport. Connect to a
 //!   configured AIR server, raw `Create` and `Read`, a held read. No AIR helper
 //!   of `orange_me` is used.
@@ -57,6 +61,7 @@
 //! so it can only be built with the local patches described in the README.
 
 pub mod addr;
+pub mod delivery;
 pub mod envelope;
 
 #[cfg(feature = "air-client")]
@@ -71,9 +76,9 @@ use std::fmt;
 
 pub use envelope::{
     Answer, Expect, KIND_CHECK_STATE, KIND_EXCHANGE, KIND_FEES, KIND_FSP_ISSUE, KIND_FSP_SPEND,
-    KIND_KEYS, KIND_KEYSETS, KIND_MINT_INFO, KIND_REDEEM, KIND_ROLLOVER, KIND_ROTATION,
-    KIND_TRANSFER, MintInfo, STATUS_ANSWERED, STATUS_REFUSED, STATUS_UNAVAILABLE, Served,
-    VerifyError, WireReply, WireRequest, answer_mint_info, answer_request, build_reply,
+    KIND_KEYS, KIND_KEYSETS, KIND_MINT_INFO, KIND_PSP_DELIVERY, KIND_REDEEM, KIND_ROLLOVER,
+    KIND_ROTATION, KIND_TRANSFER, MintInfo, STATUS_ANSWERED, STATUS_REFUSED, STATUS_UNAVAILABLE,
+    Served, VerifyError, WireReply, WireRequest, answer_mint_info, answer_request, build_reply,
     build_reply_naming, check_mint_info, verify_answer, verify_receipt, verify_reply,
 };
 

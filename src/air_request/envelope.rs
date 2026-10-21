@@ -65,6 +65,10 @@ pub const KIND_FSP_ISSUE: u8 = 11;
 /// The request kind of an FSP spend (`POST /spend`, the FSP's): the body is the
 /// request JSON the HTTP call posted.
 pub const KIND_FSP_SPEND: u8 = 12;
+/// The hash domain of a PSP delivery record (REQUEST-DESIGN.md section 18). Never
+/// sent and never served: the record answers a question that is computed, not
+/// asked (see [`super::delivery`]).
+pub const KIND_PSP_DELIVERY: u8 = 13;
 /// The reply status of a request that was answered. The body is what the HTTP
 /// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;

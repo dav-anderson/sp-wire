@@ -166,6 +166,68 @@ matters for this crate:
   has the same three fields. The goldens pin the hash of each new kind, one of them
   with a binary body.
 
+## The PSP's delivery of a purchase (`air_request::delivery`)
+
+Every other AIR call here is a wallet asking and a mint answering. The delivery is
+the mint telling a payer something the payer never asked in a request: the
+signatures for a purchase, once it settles at six confirmations, or the reason it
+was rejected. The wallet knows the address in advance and reads it (held, if it
+likes), so it needs no mailbox and no request.
+
+- **The record is a reply envelope.** It answers a pseudo request that was never
+  sent: kind `KIND_PSP_DELIVERY` (13), `request_id` = the purchase id, `R` = the
+  reply DID, no body. The PSP signs it with its DID key (`build_reply`) and seals the
+  whole reply to the reply DID. Both sides can compute the question's hash, so
+  `verify_answer` binds a record to its purchase and reply DID with no new
+  signature code, and the same envelope rules apply as for the other replies. The
+  kind is a hash domain and is never served: a request of kind 13 in a mailbox is
+  not answered.
+- **What identifies the purchase.** `sha256("sp-psp-purchase-v0" || unsealed
+  payload)`. The PSP only has the opened payload (`seal::open_payloads` returns the
+  plaintext), a seal is randomised, and the wallet does not know the txid (any
+  wallet may make the payment), so neither the sealed bytes nor the txid can be the
+  id. The unsealed payload contains the reply DID, so two purchases never share an
+  id.
+- **The address.** `sha256("sp-air-delivery-v0" || PSP DID || reply DID ||
+  purchase)` is the cell secret, from which the cell's public key is derived like
+  the other reply cells. The reply DID is a one-off key made for the purchase and
+  known only to the wallet and (inside the sealed payload) the PSP, so a third
+  party cannot compute the address and fill the write-once cell first, and the PSP
+  cannot link two purchases of one wallet.
+- **Outcomes.** `STATUS_ANSWERED` carries `Signed { keyset, signatures,
+  keysets, skipped_units, credit_cents, open_until }`: the blind-nonce/signature
+  pairs, the PSP's live keysets (so the wallet needs no keys call, and unblinds with
+  the keys of the set that signed), the units the PSP did not sign because the
+  payment was short, a credit owed for an overpayment, and, when a credit is owed,
+  the end of the window it stays open for. The last three are `serde(default)`.
+  `STATUS_REFUSED` carries one of two bodies, told apart by a `kind` tag:
+  `Refused { reason, paid_sats, paid_cents, open_until }` (`"rejected"`: the
+  purchase was rejected and nothing was signed) and `Held { reason, paid_sats,
+  paid_cents, requested_units, over_under_bps, open_until }` (`"held"`: the PSP has
+  the payment and signed nothing, because the payment is short beyond its
+  reconciliation target). Both say what the PSP received, in satoshis and in US
+  cents at its price. `open_until` is Unix seconds: if the payment is not settled
+  by then the PSP forfeits it and keeps the bitcoin, and the payer may delete the
+  purchase and the key (0 means no window was named). `Outcome::open_until()` gives
+  the end of the window, or none. Both use the one refusal status because the
+  payer's reaction is the same (nothing signed, wait); `STATUS_UNAVAILABLE` is not
+  used. The PSP's window is a setting of the PSP, which the wallet learns from the
+  record.
+- **No freshness check.** `open_record` calls `verify_answer` with `now` 0 and a
+  maximum skew of `u64::MAX`, because the wallet may read the record days after it
+  was written. The signature over the question's hash is what binds it.
+- **Write-once and retries.** The AIR server answers a write to a taken cell as a
+  read (ROADMAP item 11). `write_record` compares what it gets back with the bytes
+  it wrote: equal is `AlreadyStored` (an unacknowledged earlier write got
+  through), different is `Different` (a record is there that is not ours; the
+  caller must not overwrite it, and cannot). The PSP seals once and keeps the bytes,
+  so every retry writes the same bytes.
+- **Goldens.** The purchase id of `b"payload"`, the address for a fixed PSP, reply
+  DID and purchase, and the question's hash are pinned in the unit tests, computed
+  independently with Python's `hashlib`. `tests/air_delivery.rs` runs the transport
+  against a local `air_server` (a record written once and read twice, a held read, a
+  read that times out, several records read together under one wait).
+
 ## The seal and AIR
 
 The PSP payload is encrypted to the mint's DID public key with AIR's public key

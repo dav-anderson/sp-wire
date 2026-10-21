@@ -101,7 +101,7 @@ pub fn secret_from_hex(text: &str) -> Result<SecretKey, AirError> {
     SecretKey::from_array(bytes).map_err(|_| AirError("not a valid secret key".into()))
 }
 
-fn secret_from(bytes: [u8; 32]) -> SecretKey {
+pub(crate) fn secret_from(bytes: [u8; 32]) -> SecretKey {
     SecretKey::from_array(bytes).expect(
         "a sha256 output is a valid key (zero or above the order has probability about 2^-128)",
     )
