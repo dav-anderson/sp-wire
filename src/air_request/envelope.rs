@@ -1093,21 +1093,54 @@ mod tests {
         assert!(answer_request(&mint, &sealed, 0, &never).is_err());
     }
 
+    /// Every request kind this crate defines. A kind added to the crate goes in
+    /// this list, so that its reply is checked against every other kind's.
+    const ALL_KINDS: [u8; 15] = [
+        KIND_MINT_INFO,
+        KIND_KEYS,
+        KIND_KEYSETS,
+        KIND_ROTATION,
+        KIND_ROLLOVER,
+        KIND_CHECK_STATE,
+        KIND_FEES,
+        KIND_EXCHANGE,
+        KIND_TRANSFER,
+        KIND_REDEEM,
+        KIND_FSP_ISSUE,
+        KIND_FSP_SPEND,
+        KIND_PSP_DELIVERY,
+        KIND_PSP_SPEND,
+        KIND_PSP_RECONCILE,
+    ];
+
     #[test]
     fn a_reply_to_one_kind_is_not_an_answer_to_another() {
+        // The kinds are the numbers 1 to 15, each once.
+        assert_eq!(ALL_KINDS.to_vec(), (1..=15).collect::<Vec<u8>>());
         // Same id and R: only the kind differs, and the kind is in the hash.
         let mint = SecretKey::new();
         let did = addr::key_to_did(&mint.public_key());
         let r = SecretKey::new();
-        let (keys, sealed) = asked(KIND_KEYS, &mint, &r);
-        let answer = answer_request(&mint, &sealed, now_secs(), &serve_all).unwrap();
-        let plain = addr::open(&r, &answer.sealed_reply).unwrap();
-        let mut keysets = keys.clone();
-        keysets.kind = KIND_KEYSETS;
-        assert_eq!(
-            verify_answer(&plain, &did, &keysets, now_secs(), 300).unwrap_err(),
-            VerifyError::WrongRequestHash
-        );
+        let serve_any = |_: u8, _: &[u8]| Some(Served::Body(KEYS_BODY.to_vec()));
+        for asked_kind in ALL_KINDS {
+            let (request, sealed) = asked(asked_kind, &mint, &r);
+            let answer = answer_request(&mint, &sealed, now_secs(), &serve_any).unwrap();
+            let plain = addr::open(&r, &answer.sealed_reply).unwrap();
+            for expected_kind in ALL_KINDS {
+                let mut expected = request.clone();
+                expected.kind = expected_kind;
+                let checked = verify_answer(&plain, &did, &expected, now_secs(), 300);
+                if expected_kind == asked_kind {
+                    assert_eq!(checked.unwrap().body, KEYS_BODY, "kind {asked_kind}");
+                } else {
+                    assert_eq!(
+                        checked.unwrap_err(),
+                        VerifyError::WrongRequestHash,
+                        "a reply to kind {asked_kind} was taken as an answer to kind {expected_kind}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

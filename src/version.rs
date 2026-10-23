@@ -1,8 +1,10 @@
 //! The wire version, and what a wallet does with a mint's.
 //!
-//! Every mint's `GET /health` returns `"wire_version": <integer>`. The number
-//! changes whenever any encoded byte or JSON field of this crate changes. A
-//! wallet refuses a mint whose number is not its own.
+//! Every mint reports `"wire_version": <integer>` in its mint info (what it
+//! answers over AIR to the mint-info request). The number changes whenever any
+//! encoded byte or JSON field of this crate changes. A wallet refuses a mint
+//! whose number is not its own: [`check`] compares the number a mint reported
+//! with [`WIRE_VERSION`].
 
 use std::fmt;
 
@@ -24,10 +26,9 @@ pub const WIRE_VERSION: u32 = 3;
 /// A mint speaks another wire version than this build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireMismatch {
-    /// `/health` carried a different number.
+    /// The mint reported a different number.
     Different { mint: u64, ours: u32 },
-    /// `/health` carried no `wire_version`, or not an integer: a mint from
-    /// before wire versions.
+    /// The mint reported no `wire_version`: a mint from before wire versions.
     Missing { ours: u32 },
 }
 
@@ -40,18 +41,13 @@ impl fmt::Display for WireMismatch {
             ),
             WireMismatch::Missing { ours } => write!(
                 f,
-                "this mint does not report a wire_version in /health (this wallet speaks {ours}): it is older than wire versions, update it"
+                "this mint does not report a wire_version (this wallet speaks {ours}): it is older than wire versions, update it"
             ),
         }
     }
 }
 
 impl std::error::Error for WireMismatch {}
-
-/// Check the `wire_version` of a `/health` body against [`WIRE_VERSION`].
-pub fn check_health(health: &serde_json::Value) -> Result<(), WireMismatch> {
-    check(health.get("wire_version").and_then(|v| v.as_u64()))
-}
 
 /// Check a mint's reported number (`None` if it reported none).
 pub fn check(reported: Option<u64>) -> Result<(), WireMismatch> {
@@ -68,7 +64,6 @@ pub fn check(reported: Option<u64>) -> Result<(), WireMismatch> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn the_wire_version_is_three() {
@@ -77,39 +72,39 @@ mod tests {
 
     #[test]
     fn the_same_version_passes() {
-        assert_eq!(
-            check_health(&json!({"status": "ok", "wire_version": WIRE_VERSION})),
-            Ok(())
-        );
+        assert_eq!(check(Some(3)), Ok(()));
     }
 
     #[test]
     fn another_version_is_refused_and_says_both() {
         // a mint still on version 1 (the old seal format)
-        let e = check_health(&json!({"wire_version": 1})).unwrap_err();
+        let e = check(Some(1)).unwrap_err();
         assert_eq!(e, WireMismatch::Different { mint: 1, ours: 3 });
-        let text = e.to_string();
-        assert!(
-            text.contains("wire version 1") && text.contains("speaks 3"),
-            "{text}"
+        assert_eq!(
+            e.to_string(),
+            "this mint speaks wire version 1 and this wallet speaks 3: update whichever is older"
         );
         // a mint still on version 2 (the 32-byte x-only service ID)
-        let e = check_health(&json!({"wire_version": 2})).unwrap_err();
+        let e = check(Some(2)).unwrap_err();
         assert_eq!(e, WireMismatch::Different { mint: 2, ours: 3 });
+        assert_eq!(
+            e.to_string(),
+            "this mint speaks wire version 2 and this wallet speaks 3: update whichever is older"
+        );
+        // and a mint ahead of us
+        assert_eq!(
+            check(Some(4)),
+            Err(WireMismatch::Different { mint: 4, ours: 3 })
+        );
     }
 
     #[test]
-    fn a_health_without_a_version_is_refused() {
-        for body in [
-            json!({"status": "ok"}),
-            json!({"wire_version": "2"}),
-            json!({"wire_version": null}),
-        ] {
-            assert_eq!(
-                check_health(&body),
-                Err(WireMismatch::Missing { ours: 3 }),
-                "{body}"
-            );
-        }
+    fn a_mint_that_reports_no_version_is_refused_with_the_fixed_text() {
+        let e = check(None).unwrap_err();
+        assert_eq!(e, WireMismatch::Missing { ours: 3 });
+        assert_eq!(
+            e.to_string(),
+            "this mint does not report a wire_version (this wallet speaks 3): it is older than wire versions, update it"
+        );
     }
 }

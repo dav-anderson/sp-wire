@@ -106,6 +106,7 @@ async fn a_held_read_gets_the_record_when_it_arrives() {
     let built = build_record(&psp_key, &reply, &purchase, &outcome, addr::now_secs()).unwrap();
 
     let writer = tokio::spawn(async move {
+        // This delay is not asserted on: it only lets the read be held first; the record arrives either way.
         tokio::time::sleep(Duration::from_millis(500)).await;
         write_record(&psp_writer, &built.cell, &built.sealed, 10)
             .await
@@ -161,6 +162,7 @@ async fn several_records_are_read_together_within_one_wait() {
         .unwrap();
     let second = build_record(&psp_key, &readers[1].1, &readers[1].2, &signed(), 5).unwrap();
     let writer = tokio::spawn(async move {
+        // This delay is not asserted on: it only lets the read be held first; the record arrives either way.
         tokio::time::sleep(Duration::from_millis(500)).await;
         write_record(&psp_writer, &second.cell, &second.sealed, 10)
             .await

@@ -256,7 +256,7 @@ pub fn encode(request: &RedeemRequest) -> Vec<u8> {
 }
 
 /// The key a request is stored under, and the id of its queue entry:
-/// `SHA-256("esp-mint/redeem-request/v1" || the canonical encoding)`. It covers
+/// `SHA-256("esp-mint/redeem-request/v2" || the canonical encoding)`. It covers
 /// every byte of the encoding that is measured and, so, every signature.
 pub fn request_hash(request: &RedeemRequest) -> String {
     let mut hasher = Sha256::new();

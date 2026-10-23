@@ -58,6 +58,13 @@ mod tests {
         assert_eq!(psp_to_esp(10), 10u128.pow(12));
         // the largest PSP denomination, 2^24
         assert_eq!(psp_to_esp(16_777_216), 1_677_721_600_000_000_000);
+        // The constants themselves: ten PSP to the dollar, the largest
+        // denomination and the largest PSP amount that fits one note.
+        assert_eq!(ESP_PER_PSP, 100_000_000_000);
+        assert_eq!(ESP_PER_USD, 1_000_000_000_000);
+        assert_eq!(10 * u128::from(ESP_PER_PSP), ESP_PER_USD);
+        assert_eq!(MAX_PSP_DENOMINATION, 1 << 24);
+        assert_eq!(MAX_PSP_PER_NOTE, 184_467_440);
     }
 
     #[test]

@@ -10,12 +10,10 @@ use sp_wire::esp::redeem::{
     self, FIXED_BYTES, FORMAT_VERSION, INPUT_BYTES, KEYSET_BYTES, MIN_REQUEST_BYTES, OUTPUT_BYTES,
     RedeemInput, RedeemOutput, RedeemRequest,
 };
-use sp_wire::esp::terms::Terms;
 use sp_wire::fsp;
 use sp_wire::keyset::{KEYSET_HEX_LEN, KEYSET_LEN, is_keyset_id, keyset_id};
 use sp_wire::payload::{self, DID_LEN, Payload};
 use sp_wire::service::ServiceDid;
-use sp_wire::units::{ESP_PER_PSP, ESP_PER_USD, MAX_PSP_DENOMINATION, MAX_PSP_PER_NOTE};
 
 fn key(n: u8) -> PublicKey {
     Keypair::from_seckey_slice(SECP256K1, &[n; 32])
@@ -71,19 +69,6 @@ fn request(inputs: usize, memo: &str, decline: usize, refund: usize) -> RedeemRe
         refund_outputs: (0..refund).map(|i| redeem_output(120 + i as u8)).collect(),
         service_signature: Signature::from_slice(&[5; 64]).unwrap(),
     }
-}
-
-#[test]
-fn the_wire_version_is_three() {
-    assert_eq!(sp_wire::WIRE_VERSION, 3);
-}
-
-#[test]
-fn a_point_is_33_bytes_and_so_is_a_service_id() {
-    assert_eq!(key(1).serialize().len(), 33);
-    assert_eq!(did(1).serialize().len(), 33);
-    assert_eq!(did(1).serialize(), key(1).serialize());
-    assert_eq!(DID_LEN, 33);
 }
 
 #[test]
@@ -172,15 +157,6 @@ fn the_redeem_encoding_reads_back_and_a_hash_is_64_hex() {
 }
 
 #[test]
-fn terms_are_41_bytes() {
-    let t = Terms {
-        service: did(1),
-        redeemable_after_day: 20_500,
-    };
-    assert_eq!(t.to_bytes().len(), 41);
-}
-
-#[test]
 fn an_fsp_issue_group_is_16_bytes_plus_106_a_note_and_41_an_output() {
     assert_eq!(fsp::issue_group_size(0, 0), 16);
     assert_eq!(fsp::issue_group_size(1, 0), 16 + 106);
@@ -188,18 +164,10 @@ fn an_fsp_issue_group_is_16_bytes_plus_106_a_note_and_41_an_output() {
     assert_eq!(fsp::issue_group_size(2, 3), 16 + 212 + 123);
 }
 
+#[cfg(feature = "seal")]
 #[test]
-fn the_units_are_ten_psp_to_the_dollar() {
-    assert_eq!(ESP_PER_PSP, 100_000_000_000);
-    assert_eq!(ESP_PER_USD, 1_000_000_000_000);
-    assert_eq!(10 * u128::from(ESP_PER_PSP), ESP_PER_USD);
-    assert_eq!(MAX_PSP_DENOMINATION, 1 << 24);
-    assert_eq!(MAX_PSP_PER_NOTE, 184_467_440);
-}
-
-#[test]
-fn a_sealed_payload_is_80_bytes_longer_than_its_payload() {
-    use sp_wire::seal::{OVERHEAD, SENDER_KEY_BYTES, TAG_BYTES};
+fn a_sealed_payload_is_80_bytes_longer_than_its_payload_and_hides_the_did() {
+    use sp_wire::seal::{self, OVERHEAD, SENDER_KEY_BYTES, SecretKey, TAG_BYTES};
     assert_eq!(SENDER_KEY_BYTES, 64);
     assert_eq!(TAG_BYTES, 16);
     assert_eq!(OVERHEAD, 80);
@@ -211,4 +179,24 @@ fn a_sealed_payload_is_80_bytes_longer_than_its_payload() {
     assert_eq!(sealed(255), 10_570);
     // With the keyset the payload carries, 8 bytes more.
     assert_eq!(sealed(1) + 8, 164);
+
+    // A real payload, sealed to a mint key: 156 bytes for one output.
+    let reply_did = key(9).serialize();
+    let plain = payload::encode(&Payload {
+        did: reply_did,
+        outputs: vec![output(4, 20)],
+        keyset: None,
+    })
+    .unwrap();
+    assert_eq!(plain.len(), 35 + 41);
+    // The reply DID is in the plaintext, so finding it absent below means something.
+    assert!(plain.windows(DID_LEN).any(|w| w == reply_did));
+    let mint = SecretKey::new();
+    let sealed_bytes = seal::encrypt(&mint.public_key(), &plain).unwrap();
+    assert_eq!(sealed_bytes.len(), plain.len() + OVERHEAD);
+    assert_eq!(sealed_bytes.len(), sealed(1));
+    assert!(
+        !sealed_bytes.windows(DID_LEN).any(|w| w == reply_did),
+        "the reply DID shows in the sealed bytes"
+    );
 }

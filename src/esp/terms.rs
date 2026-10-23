@@ -102,6 +102,12 @@ mod tests {
         assert_eq!(bytes.len(), 41);
         assert_eq!(hex::encode(&bytes[..33]), G_DID);
         assert_eq!(&bytes[33..], &21_100u64.to_be_bytes());
+        // Built field by field, the terms are 41 bytes as well.
+        let direct = Terms {
+            service: service(),
+            redeemable_after_day: 20_500,
+        };
+        assert_eq!(direct.to_bytes().len(), 41);
     }
 
     #[test]

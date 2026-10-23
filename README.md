@@ -19,12 +19,12 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `payload` | the PSP OP_RETURN payload: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
 | `seal` | the sealed payload's format (a constant 80 bytes of overhead: the 64-byte sender key and the 16-byte tag) and, with the `seal` feature, `encrypt`, `decrypt`, `parse_public_key` |
 | `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response` |
-| `esp` | `exchange`, `transfer`, `redeem` (the binary request and its reply), `rollover`, `queue` views, `terms`, `hash_keysets` |
+| `esp` | `exchange`, `transfer`, `redeem` (the binary request and its reply), `rollover`, `queue` views, `terms`, `hash_keysets`, and `handover`, the file that hands ESP notes to a service (`Handover`, `HandedNote`) |
 | `fsp` | `IssueRequest`/`Response`, `SpendRequest`/`Response`, `KeysResponse`, `FeesResponse`, `Refusal` |
 | `codes` | the `code` of an error body: `keyset_retired`, `unknown_keyset`, `keyset_not_current` (reserved: no mint sends it), `burn_not_proven`, `note_spent_elsewhere`, ... |
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
-| `version` | `WIRE_VERSION` and `check_health`, the check a wallet makes |
+| `version` | `WIRE_VERSION` and `check`, the check a wallet makes of the wire version a mint reports |
 | `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, its rollover and check-state, and the PSP's delivery of a purchase (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
@@ -37,11 +37,20 @@ The request hashes (`request_hash`, `hash`, `digest`) live here with the types
 they cover: they are part of the wire, because a retry gets its stored answer by
 hash.
 
+`esp::handover` is the file that hands ESP notes to a service: `Handover` (the
+service, the redeemable-after day and the notes) and `HandedNote` (an amount, the
+note, its spend secret and the keyset that signed it). fsp-mint's `export-esp`
+writes it and the service's wallet reads it with `Handover::read`, which refuses
+a file with no notes or with a note that names no keyset (or an empty one). The file is pinned by a
+test. **Whoever holds the file holds the notes**, because each comes with its
+spend secret: keep it private and delete it once the wallet has taken the notes.
+
 ## wire_version
 
-`WIRE_VERSION` is a single integer, currently 3. Every mint's `GET /health`
-returns it as `wire_version`, and a wallet refuses a mint whose number is not its
-own, with an error that names both (`version::check_health`).
+`WIRE_VERSION` is a single integer, currently 3. Every mint reports it as
+`wire_version` in its mint info (see "The AIR request" below), and a wallet
+refuses a mint whose number is not its own, or that reports none, with an error
+that names both (`version::check`).
 
 **Changing any encoded byte or JSON field of this crate means bumping
 `WIRE_VERSION`.** The rule and what counts as a change are in
@@ -55,6 +64,12 @@ own, with an error that names both (`version::check_health`).
 If one of them fails you changed the wire. If that was meant, bump
 `WIRE_VERSION`, update the golden file in the same commit and say so in
 [CHANGELOG.md](CHANGELOG.md), which also has the history of each version.
+
+`tests/hashes.rs` is not a golden: it changes one field at a time of each request
+hash and digest and checks that the value changes, so that no field is missing
+from a key an answer is stored under. The tests of `seal` are at the bottom of
+`src/seal.rs`, and `tests/air_ask.rs` runs `ask_mint_info` against a local
+`air_server`.
 
 ## Features and dependencies
 
@@ -80,7 +95,7 @@ path of that checkout:
 
 ```toml
 [patch."https://github.com/ramp-stack/air"]
-air = { path = "/Users/you/air" }
+air = { path = "/path/to/air" }
 ```
 
 When upstream has merged the export, the final pin is that merged commit: the
@@ -88,32 +103,36 @@ When upstream has merged the export, the final pin is that merged commit: the
 
 ## The AIR request
 
-`air_request` carries the calls between a wallet and a mint that do not go over
-HTTP: the wallet asks for **mint info** (what `GET /health` reports: `status`,
-`wire_version`, `network`) or a PSP's **keys**, **keysets** or **rotation** (what
-`GET /keys`, `/keysets` and `/rotation` return) or sends its **rollover** or
-**check-state** (`POST /rollover`, `/check-state`: the first calls with a request
-body, the first that change state), and verifies a reply the mint signed with its
-DID key. All six are one request envelope with a kind byte (`KIND_MINT_INFO` 1,
-`KIND_KEYS` 2, `KIND_KEYSETS` 3, `KIND_ROTATION` 4, `KIND_ROLLOVER` 5,
-`KIND_CHECK_STATE` 6), and the body of the reply is the exact JSON the HTTP route
-returns; a mint that cannot answer now says so in a signed reply
-(`STATUS_UNAVAILABLE`, no body), and one that refuses says so in a signed reply
-with the HTTP `4xx` body (`STATUS_REFUSED`). The request's `body_len` is 4 bytes (it
+`air_request` carries the calls between a wallet and a mint. They go over AIR
+only (they were HTTP routes before; the wallet no longer calls them, and the
+routes the mints dropped answer 404; `GET /health` stays on each mint for
+operators): the wallet asks for **mint info** (kind 1, `MintInfo`: `status`,
+`wire_version`, `network`; the same document `GET /health` gives an operator) or a PSP's **keys** (kind 2,
+`keys::KeysResponse`), **keysets** (kind 3, `psp::KeysetsResponse`) or
+**rotation** (kind 4, `keyset::RotationResponse`) or sends its **rollover** (kind
+5, `psp::RolloverRequest`) or **check-state** (kind 6, `keys::CheckStateRequest`;
+the first calls with a request body, the first that change state), and verifies a
+reply the mint signed with its DID key. All six are one request envelope with a
+kind byte (`KIND_MINT_INFO` 1, `KIND_KEYS` 2, `KIND_KEYSETS` 3, `KIND_ROTATION` 4,
+`KIND_ROLLOVER` 5, `KIND_CHECK_STATE` 6), and the body of the reply is the JSON of
+the response type of that kind; a mint that cannot answer now says so in a signed
+reply (`STATUS_UNAVAILABLE`, no body), and one that refuses says so in a signed
+reply with the refusal's JSON body (`STATUS_REFUSED`). The request's `body_len` is 4 bytes (it
 was 2 until a rollover of 1000 notes, about half a megabyte, needed more; envelope
 version 0 is kept, since nothing that uses it was released). The kinds and the
 status are additive: no bump.
 
 The ESP's wallet-facing calls use the same envelope. A kind names a call, not a
-mint, so the ESP mint (its own DID) answers the kinds it serves in the shape its own
-routes return: mint info 1, keysets 3, rotation 4 and rollover 5 are the PSP's
-kinds, and the ESP adds `KIND_FEES` 7 (`GET /fees`), `KIND_EXCHANGE` 8,
-`KIND_TRANSFER` 9 and `KIND_REDEEM` 10 (`POST /exchange`, `/transfer`, `/redeem`;
+mint, so the ESP mint (its own DID) answers the kinds it serves in the shape of its
+own response types: mint info 1, keysets 3, rotation 4 and rollover 5 are the PSP's
+kinds, and the ESP adds `KIND_FEES` 7 (its fees and ceilings; formerly `GET /fees`),
+`KIND_EXCHANGE` 8 (`esp::exchange::ExchangeRequest`), `KIND_TRANSFER` 9
+(`esp::transfer::TransferRequest`) and `KIND_REDEEM` 10 (`esp::redeem::RedeemRequest`;
 the redeem body is the canonical binary encoding, not JSON). The ESP has no keys
-route, so it skips `KIND_KEYS`. The FSP mint's wallet-facing calls are the same
-envelope again: its `GET /health`, `/keys`, `/fees` and `/rotation` are kinds 1, 2, 7
-and 4, and it adds `KIND_FSP_ISSUE` 11 (`POST /issue`) and `KIND_FSP_SPEND` 12
-(`POST /spend`), JSON bodies. The PSP mint adds `KIND_PSP_SPEND` 14 (a spend with
+call, so it skips `KIND_KEYS`. The FSP mint's wallet-facing calls are the same
+envelope again: its mint info, keys (`fsp::KeysResponse`), fees (`fsp::FeesResponse`)
+and rotation are kinds 1, 2, 7 and 4, and it adds `KIND_FSP_ISSUE` 11
+(`fsp::IssueRequest`) and `KIND_FSP_SPEND` 12 (`fsp::SpendRequest`), JSON bodies. The PSP mint adds `KIND_PSP_SPEND` 14 (a spend with
 change: notes in, change out, an amount paid that the mint burns; JSON body,
 `psp::PspSpendRequest`) and `KIND_PSP_RECONCILE` 15 (the corrected request or the
 credit claim for an open payment; JSON body, `psp::ReconcileRequest`, signed by the
@@ -183,9 +202,9 @@ forge one. It rides `WIRE_VERSION` 3, with no bump.
 
 ```toml
 [patch."https://github.com/ramp-stack/air"]
-air = { path = "/Users/you/sandbox-mint/air-sandbox/air" }
+air = { path = "/path/to/sandbox-mint/air-sandbox/air" }
 [patch."https://github.com/ramp-stack/air_server"]
-air_server = { path = "/Users/you/sandbox-mint/air-sandbox/air_server" }
+air_server = { path = "/path/to/sandbox-mint/air-sandbox/air_server" }
 ```
 
 ## Build and test
@@ -203,7 +222,7 @@ and do not commit it:
 
 ```toml
 [patch."https://github.com/dav-anderson/mint-core.git"]
-mint-types = { path = "/Users/you/mint-core-v0.1.3/crates/mint-types" }
+mint-types = { path = "/path/to/mint-core-v0.1.3/crates/mint-types" }
 ```
 
 (The AIR patch above goes in the same file for as long as it is needed.)

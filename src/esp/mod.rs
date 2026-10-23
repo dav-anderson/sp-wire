@@ -1,6 +1,7 @@
 //! The ESP mint's request and response bodies.
 
 pub mod exchange;
+pub mod handover;
 pub mod queue;
 pub mod redeem;
 pub mod rollover;

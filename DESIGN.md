@@ -13,7 +13,7 @@ exactly the same way, and sp-wire is the one crate all four already depend on
 (mint-core is not ours to change). It is not wire: no byte of it travels, it does
 no I/O, and it does not affect `WIRE_VERSION`. It is a parser and a validator
 and nothing more; what a policy will do (replication, promotion, sequence numbers)
-is for the mints and the wallet to build on this type: copies kept on a primary and at least one secondary, only the mint promoting a secondary, sequence numbers on writes. None of it is here. If it grows
+is for the mints and the wallet to build on this type: a spend fsynced to the mint's local copy before it answers, then copied to the backups in batches that the mint never waits on, sequence numbers on writes. None of it is here. If it grows
 beyond that, it should move out of this crate. The note, nonce, blinded output and mint input/output
 types are mint-core's (`mint_types`); sp-wire depends on that crate at its
 release tag and re-exports them, so there is one definition. It does not depend
@@ -33,8 +33,25 @@ wallet would sign over a different request than the mint hashes.
 The goldens in `tests/golden/*.txt` were captured from the v0.1.0 mints before
 this crate existed, so that moving the types out of the mints provably changed no
 byte. They are the specification. The only lines that have moved since are the
-sealed-payload ones (wire version 2, below) and the ones that carry a service ID
-(wire version 3, below).
+sealed-payload ones (wire version 2, below), the ones that carry a service ID
+(wire version 3, below) and the two request hashes that gained the note
+signatures (`SpendRequest_hash` and `transfer_request_hash`, below). Those two
+were recomputed independently with Python's `hashlib`, which first reproduced the
+old values from the same inputs.
+
+## The note signature in two request hashes
+
+A request hash is the key an answer is stored under, and its doc says it covers
+every signature. Two did not cover each input's note signature (the mint's own
+signature on the note's nonce): `fsp::SpendRequest::hash` and
+`esp::transfer::request_hash`. The digests leave it out on purpose (they are what
+the spend signatures sign), so a request that differed only in a note's signature
+had the same hash as the genuine one, and could be answered with the other's
+stored answer, which might be a refusal. Both hashes now add every input's note
+signature after the spend signatures, and their tags moved to
+`fsp-mint/spend-request/v3` and `esp-mint/transfer-request/v3`, so a hash stored
+under the old rule is never taken for one under the new. Every other request hash
+already covered it. `WIRE_VERSION` stays 3: version 3 is not released.
 
 ## The service ID (wire version 3)
 
@@ -58,7 +75,7 @@ that DID, so the ID is now the DID and nothing is reduced.
   never an ID.
 - **No migration.** There is no dual format. A 64-character (x-only) ID is
   refused with a message that says so (`DidError::XOnly`), a version 2 redeem
-  request is refused with its own message, and `check_health` refuses a mint on
+  request is refused with its own message, and `version::check` refuses a mint on
   another wire version.
 - **Sizes.** A redeem request grows by one byte per service in it: fixed part 119 to
   120, input 186 to 187, output 81 to 82. The fees are 0 in the family today, so no
@@ -106,9 +123,10 @@ matters for this crate:
   age) and leaves the body to the caller. This is additive, so no `WIRE_VERSION`
   bump and no new envelope version: a mint that does not know a kind skips it, and
   the wallet waits out its tries.
-- **The body is the HTTP body.** The reply body for keys, keysets and rotation is
-  the bytes the HTTP route returns, built by the same function in the mint, so the
-  wallet reads it with the types it already uses. The signature covers those bytes.
+- **The body is the response type's JSON.** The reply body for keys, keysets and
+  rotation is the JSON of the response type of that kind (the routes they were once
+  served on are gone), built by the same function in the mint, so the wallet reads
+  it with the types it already uses. The signature covers those bytes.
 - **Unavailable is signed.** A mint that understood the question and cannot answer
   (its lock is poisoned, a rotation step failed: the HTTP route would be a 500)
   signs a reply with `STATUS_UNAVAILABLE` and no body, so the wallet fails at once

@@ -15,7 +15,7 @@
 //! - [`service`]: [`ServiceDid`], the service ID: an AIR DID, 33 bytes, 66 hex characters.
 //! - `air_request` (feature `air-request`, with `air-client` for the transport): the first request
 //!   between two parties over AIR, mint info with a mint-signed reply. Rides [`WIRE_VERSION`] 3.
-//! - [`version`]: [`WIRE_VERSION`] and the check a wallet makes against `/health`.
+//! - [`version`]: [`WIRE_VERSION`] and the check a wallet makes of the wire version a mint reports.
 //! - [`storage`]: the storage policy (an ordered list of service IDs per kind of
 //!   data), its parser and its checks. Not part of the wire.
 //!

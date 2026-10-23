@@ -202,6 +202,11 @@ mod tests {
         assert_eq!(ServiceDid::from(a.public_key()), a);
         assert_eq!(ServiceDid::from(&a.public_key()), a);
         assert_eq!(hex::encode(a.x_only().serialize()), G);
+        // A point is 33 bytes, and the ID is its serialization byte for byte;
+        // the payload's DID field is the same 33 bytes.
+        assert_eq!(a.public_key().serialize().len(), 33);
+        assert_eq!(a.serialize(), a.public_key().serialize());
+        assert_eq!(crate::payload::DID_LEN, 33);
     }
 
     #[test]

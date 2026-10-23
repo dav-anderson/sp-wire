@@ -130,7 +130,7 @@ pub struct SpendRequest {
 }
 
 const SPEND_DIGEST_TAG: &[u8] = b"fsp-mint/spend/v1";
-const SPEND_HASH_TAG: &[u8] = b"fsp-mint/spend-request/v2";
+const SPEND_HASH_TAG: &[u8] = b"fsp-mint/spend-request/v3";
 
 impl SpendRequest {
     /// What every spend signature covers.
@@ -154,13 +154,21 @@ impl SpendRequest {
         h.finalize().into()
     }
 
-    /// The key the answer is stored under (digest and every signature).
+    /// The key the answer is stored under: the digest, every spend signature,
+    /// every note's signature (the mint's, on its nonce) and every keyset. A
+    /// request that differs in any of them never gets another's stored answer.
     pub fn hash(&self) -> String {
         let mut h = Sha256::new();
         h.update(SPEND_HASH_TAG);
         h.update(self.digest());
         for i in &self.inputs {
             h.update(i.input.spend_signature.as_ref());
+        }
+        // The note signatures too: the digest has the nonce but not the mint's
+        // signature on it, and a note with a wrong signature is refused, so a
+        // request that differs only there must not share a stored answer.
+        for i in &self.inputs {
+            h.update(i.input.note.signature.serialize());
         }
         // Every keyset field, length-prefixed (the digest has them without
         // lengths), so no two different requests share a hash.

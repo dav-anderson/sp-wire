@@ -198,22 +198,14 @@ mod tests {
         }
     }
 
-    fn encode(payload: &Payload) -> Vec<u8> {
-        let mut out = vec![DID_LEN as u8];
-        out.extend_from_slice(&payload.did);
-        out.push(payload.outputs.len() as u8);
-        for output in &payload.outputs {
-            out.extend_from_slice(&output.amount.units.to_be_bytes());
-            out.extend_from_slice(&output.blind_nonce.0.serialize());
-        }
-        out
-    }
-
     #[test]
     fn the_public_encode_reproduces_the_known_answer_and_round_trips() {
         let bytes = super::encode(&sample()).unwrap();
         assert_eq!(hex::encode(&bytes), KAT_PLAINTEXT_HEX);
         assert_eq!(decode(&bytes), Ok(sample()));
+        // And the known answer itself, from its hex literal, decodes to the sample.
+        let from_hex = hex::decode(KAT_PLAINTEXT_HEX).expect("valid hex");
+        assert_eq!(decode(&from_hex), Ok(sample()));
     }
 
     #[test]
@@ -245,29 +237,18 @@ mod tests {
     }
 
     #[test]
-    fn decodes_known_answer_plaintext() {
-        let bytes = hex::decode(KAT_PLAINTEXT_HEX).expect("valid hex");
-        assert_eq!(decode(&bytes), Ok(sample()));
-    }
-
-    #[test]
-    fn test_encode_reproduces_known_answer_plaintext() {
-        assert_eq!(hex::encode(encode(&sample())), KAT_PLAINTEXT_HEX);
-    }
-
-    #[test]
     fn the_did_is_carried_through_unchecked() {
         let payload = Payload {
             keyset: None,
             did: did(7),
             outputs: vec![output(1, POINT_3G)],
         };
-        assert_eq!(decode(&encode(&payload)), Ok(payload));
+        assert_eq!(decode(&super::encode(&payload).unwrap()), Ok(payload));
     }
 
     #[test]
     fn any_truncation_is_rejected() {
-        let bytes = encode(&sample());
+        let bytes = super::encode(&sample()).unwrap();
         for len in 0..bytes.len() {
             assert!(decode(&bytes[..len]).is_err(), "length {len} was accepted");
         }
@@ -275,19 +256,19 @@ mod tests {
 
     #[test]
     fn rejects_trailing_bytes() {
-        let mut bytes = encode(&sample());
+        let mut bytes = super::encode(&sample()).unwrap();
         bytes.push(0);
         assert_eq!(decode(&bytes), Err(DecodeError::TrailingBytes));
     }
 
     #[test]
     fn rejects_zero_amount() {
-        let payload = Payload {
-            keyset: None,
-            did: did(7),
-            outputs: vec![output(0, POINT_3G)],
-        };
-        assert_eq!(decode(&encode(&payload)), Err(DecodeError::ZeroAmount));
+        // Deliberately malformed: the known answer with its first output's
+        // amount (bytes 35 to 43, after the DID) set to zero. `encode` refuses to
+        // write such a payload, so the bytes are made by hand.
+        let mut bytes = hex::decode(KAT_PLAINTEXT_HEX).expect("valid hex");
+        bytes[35..43].copy_from_slice(&0u64.to_be_bytes());
+        assert_eq!(decode(&bytes), Err(DecodeError::ZeroAmount));
     }
 
     #[test]

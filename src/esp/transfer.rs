@@ -12,7 +12,7 @@ use super::terms::Terms;
 use crate::service::ServiceDid;
 
 const DIGEST_TAG: &[u8] = b"esp-mint/transfer/v1";
-const REQUEST_TAG: &[u8] = b"esp-mint/transfer-request/v2";
+const REQUEST_TAG: &[u8] = b"esp-mint/transfer-request/v3";
 
 /// A transfer answers in the same shape as an exchange: the service, the
 /// redeemable-after day, and one blind signature and key for each output.
@@ -101,9 +101,10 @@ pub fn digest(
     hasher.finalize().into()
 }
 
-/// The key a request is stored under. It covers the digest and every signature,
-/// so a request with different signatures never gets another request's stored
-/// response.
+/// The key a request is stored under. It covers the digest and every signature
+/// (the service's, each input's spend signature and each note's own signature
+/// from the mint) and every keyset, so a request with different signatures never
+/// gets another request's stored response.
 pub fn request_hash(request: &TransferRequest) -> String {
     let mut hasher = Sha256::new();
     hasher.update(REQUEST_TAG);
@@ -111,6 +112,9 @@ pub fn request_hash(request: &TransferRequest) -> String {
     hasher.update(request.service_signature.as_ref());
     for input in &request.inputs {
         hasher.update(input.spend_signature.as_ref());
+    }
+    for input in &request.inputs {
+        hasher.update(input.note.signature.serialize());
     }
     // Every keyset field, each with its length, so two requests that differ
     // only in a keyset never share a hash.
