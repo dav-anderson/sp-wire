@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use mint_types::{MintInput, MintOutput, MintOutputOutcome, Nonce};
-use secp256k1::PublicKey;
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 
 /// `POST /melt` of mint-core: the notes to burn and a memo.
@@ -99,9 +99,10 @@ pub const MAX_SPEND_MEMO_BYTES: usize = 256;
 
 /// A PSP spend with change (AIR kind 14, [`crate::air_request::KIND_PSP_SPEND`]):
 /// notes in, change out, an amount paid, and a memo. The inputs are worth the
-/// change plus `pay`, exactly. `pay` is not reissued: the PSP mint burns it,
-/// and it is the SPI's revenue. With `pay` 0 this would be a rollover, and the
-/// mint refuses it (`nothing_to_pay`).
+/// change plus `pay`, exactly. `pay` is not returned to the payer: the PSP mint
+/// either burns it or reissues it to the SPI's own wallet (a [`PspHandover`]),
+/// as its operator chose, and it is the SPI's revenue. With `pay` 0 this would
+/// be a rollover, and the mint refuses it (`nothing_to_pay`).
 ///
 /// It is fsp-mint's [`crate::fsp::SpendRequest`] with a PSP rollover's shape:
 /// each input names its keyset in `input_keysets` (the mint verifies a note, and
@@ -120,7 +121,8 @@ pub struct PspSpendRequest {
     pub keyset: String,
     /// The change: new notes for the payer.
     pub outputs: Vec<MintOutput>,
-    /// What is paid, in PSP units. Burned, never reissued.
+    /// What is paid, in PSP units. Never returned to the payer: burned, or
+    /// reissued to the SPI's own wallet.
     pub pay: u64,
     #[serde(default)]
     pub memo: String,
@@ -193,7 +195,8 @@ pub struct PspSpendResponse {
     pub outcomes: Vec<MintOutputOutcome>,
     /// The public key each output was signed with, for unblinding.
     pub keys: Vec<PublicKey>,
-    /// `pay`, burned.
+    /// `pay`: what was paid. The mint burns it, or reissues it to the SPI's own
+    /// wallet (see [`PspHandover`]); either way it is not the payer's.
     pub paid: u64,
 }
 
@@ -341,5 +344,119 @@ mod hex_signature {
         let text = String::deserialize(d)?;
         let bytes = hex::decode(&text).map_err(serde::de::Error::custom)?;
         Signature::from_slice(&bytes).map_err(serde::de::Error::custom)
+    }
+}
+
+/// PSP notes a PSP mint made for the SPI's own wallet, in a file: the paid PSP of
+/// spends (kind 14) that the mint reissues instead of burning. The mint writes
+/// one file for each spend, and the SPI's ecash-wallet reads it with
+/// `receive-psp`. Like [`crate::esp::handover::Handover`], **whoever holds the
+/// file holds the notes**: each comes with its spend secret. The wallet swaps
+/// them at the mint for notes only it knows, so a file is worth nothing once it
+/// has been taken in; until then it is the SPI's cash and is kept like cash
+/// (the mint writes it readable by its own account and group only).
+///
+/// The format is pinned by a test below: a change to a field name or to how a
+/// field is written changes what files already written can be read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PspHandover {
+    pub notes: Vec<HandedPspNote>,
+}
+
+/// One PSP note in a [`PspHandover`], with the secret that spends it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandedPspNote {
+    pub amount: u64,
+    pub note: mint_types::Note,
+    /// The secret key of the note's nonce. Whoever has it can spend the note.
+    pub spend_secret: SecretKey,
+    /// The PSP keyset that signed the note (16 hex characters). Required and not
+    /// empty: a file without it, or with an empty one, does not read.
+    pub keyset: String,
+}
+
+impl PspHandover {
+    /// Read a file. It must be JSON of the shape above, hold at least one note,
+    /// and name a keyset on every note (not an empty one; the error names the
+    /// note). It does not check the notes: that each spend secret matches its
+    /// nonce, that the notes are not already held and that the mint signed them
+    /// are for the wallet that takes them in.
+    pub fn read(bytes: &[u8]) -> Result<PspHandover, String> {
+        let file: PspHandover =
+            serde_json::from_slice(bytes).map_err(|e| format!("not a PSP hand-over file: {e}"))?;
+        if file.notes.is_empty() {
+            return Err("the PSP hand-over file holds no notes".into());
+        }
+        if let Some(at) = file.notes.iter().position(|n| n.keyset.is_empty()) {
+            return Err(format!(
+                "note {} of the PSP hand-over file names no keyset (its keyset is empty)",
+                at + 1
+            ));
+        }
+        Ok(file)
+    }
+
+    /// The PSP units in the file.
+    pub fn units(&self) -> u128 {
+        self.notes.iter().map(|n| u128::from(n.amount)).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file as the code writes it: the fields in the order of the structs, no
+    /// spaces. The note is the first of the `IssueRequest` golden in
+    /// `tests/golden/fsp.txt`, the one the ESP hand-over test uses too.
+    const FILE: &str = r#"{"notes":[{"amount":4,"note":{"nonce":"03f76a39d05686e34a4420897e359371836145dd3973e3982568b60f8433adde6e","signature":"02552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a84"},"spend_secret":"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a","keyset":"0102030405060708"}]}"#;
+
+    fn file() -> PspHandover {
+        serde_json::from_str(FILE).unwrap()
+    }
+
+    #[test]
+    fn a_psp_handover_file_is_pinned_and_round_trips() {
+        // The file is exactly this text. If this assertion fails, the format
+        // changed: files already written by a mint may no longer read. That is a
+        // change to the wire; do not edit the literal to make the test pass.
+        assert_eq!(serde_json::to_string(&file()).unwrap(), FILE);
+        assert_eq!(PspHandover::read(FILE.as_bytes()).unwrap(), file());
+        let written = serde_json::to_vec_pretty(&file()).unwrap();
+        assert_eq!(PspHandover::read(&written).unwrap(), file());
+        assert_eq!(file().units(), 4);
+    }
+
+    #[test]
+    fn a_bad_psp_handover_file_is_refused() {
+        let prefix = "not a PSP hand-over file: ";
+        let keyset = r#","keyset":"0102030405060708""#;
+        assert_eq!(FILE.matches(keyset).count(), 1);
+        // No keyset on a note, and an empty one (the error names the note).
+        let why = PspHandover::read(FILE.replace(keyset, "").as_bytes()).unwrap_err();
+        assert!(
+            why.starts_with(prefix) && why.contains("missing field `keyset`"),
+            "{why}"
+        );
+        let empty = FILE.replace(keyset, r#","keyset":"""#);
+        assert_eq!(
+            PspHandover::read(empty.as_bytes()),
+            Err("note 1 of the PSP hand-over file names no keyset (its keyset is empty)".into())
+        );
+        // No notes.
+        assert_eq!(
+            PspHandover::read(br#"{"notes":[]}"#),
+            Err("the PSP hand-over file holds no notes".into())
+        );
+        // A spend secret that is not 32 bytes of hex.
+        let secret = "0a".repeat(32);
+        assert!(FILE.contains(&secret));
+        let short = FILE.replace(&secret, &"0a".repeat(31));
+        let why = PspHandover::read(short.as_bytes()).unwrap_err();
+        assert!(why.starts_with(prefix), "{why}");
+        // Not JSON, and JSON of another shape.
+        assert!(PspHandover::read(b"hello").unwrap_err().starts_with(prefix));
+        assert!(PspHandover::read(b"[]").unwrap_err().starts_with(prefix));
+        assert!(PspHandover::read(b"{}").unwrap_err().starts_with(prefix));
     }
 }

@@ -232,7 +232,7 @@ mod tests {
             ("x-only, 32 bytes", x_only.to_string()),
             ("a prefix that is no key", not_a_prefix),
         ] {
-            let err = parse_public_key(&bad).err().expect(what);
+            let err = parse_public_key(&bad).expect_err(what);
             assert_eq!(err.to_string(), refused, "{what}: {bad:?}");
         }
     }

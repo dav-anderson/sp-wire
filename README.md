@@ -18,7 +18,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `keyset` | the key-set ID (8 bytes, 16 hex characters), the PSP's `keyset_id`, `KeysetWindow`, `RotationResponse` (`GET /rotation`) |
 | `payload` | the PSP OP_RETURN payload: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
 | `seal` | the sealed payload's format (a constant 80 bytes of overhead: the 64-byte sender key and the 16-byte tag) and, with the `seal` feature, `encrypt`, `decrypt`, `parse_public_key` |
-| `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response` |
+| `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response`, and the file that hands the PSP a spend paid to the SPI's wallet (`PspHandover`, `HandedPspNote`) |
 | `esp` | `exchange`, `transfer`, `redeem` (the binary request and its reply), `rollover`, `queue` views, `terms`, `hash_keysets`, and `handover`, the file that hands ESP notes to a service (`Handover`, `HandedNote`) |
 | `fsp` | `IssueRequest`/`Response`, `SpendRequest`/`Response`, `KeysResponse`, `FeesResponse`, `Refusal` |
 | `codes` | the `code` of an error body: `keyset_retired`, `unknown_keyset`, `keyset_not_current` (reserved: no mint sends it), `burn_not_proven`, `note_spent_elsewhere`, ... |
@@ -44,6 +44,14 @@ writes it and the service's wallet reads it with `Handover::read`, which refuses
 a file with no notes or with a note that names no keyset (or an empty one). The file is pinned by a
 test. **Whoever holds the file holds the notes**, because each comes with its
 spend secret: keep it private and delete it once the wallet has taken the notes.
+
+`psp::PspHandover` is the same kind of file for PSP: the paid PSP of a spend that
+psp-mint reissues instead of burning, one file for each spend (`revenue/<request
+hash>.json`). `HandedPspNote` is an amount, the note, its spend secret and the
+keyset that signed it; `PspHandover::read` refuses a file with no notes or with a
+note that names no keyset. The file is pinned by a test, and **whoever holds it
+holds the notes**: the SPI's ecash-wallet swaps them for notes of its own with
+`receive-psp`.
 
 ## wire_version
 

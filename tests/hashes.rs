@@ -938,7 +938,7 @@ fn a_redeem_body_that_is_not_exactly_one_request_is_refused_with_its_reason() {
     assert_eq!(&bytes[memo_length + 2..memo_length + 8], b"payout");
 
     let refused = |changed: &[u8], needle: &str| {
-        let why = redeem::decode(changed).err().expect(needle);
+        let why = redeem::decode(changed).expect_err(needle);
         assert!(why.contains(needle), "{why:?} does not say {needle:?}");
     };
 

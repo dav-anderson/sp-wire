@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 (unreleased)
+
+- **New: `psp::PspHandover` and `psp::HandedPspNote`** (no feature): the file in which psp-mint hands the SPI's ecash-wallet the PSP a spend paid and the mint reissued (burning is opt-in), with `PspHandover::read` and `units`. Pinned by a test, as `esp::handover` is. Dependents move their pin from `v0.5.0` to the tag of this version, and their `Cargo.lock`.
+- Doc change: `PspSpendRequest` and `PspSpendResponse` no longer say the mint burns `pay`; it reissues it unless burning is on.
+
 ## 0.5.0 (unreleased)
 
 **AIR pinned to `eae5133`, which exports `SecretKey`; air_server 1.0.1 (unreleased).** AIR moves from `ff41c09` (3.0.0) to `eae5133` on AIR's branch `air3-export-secretkey` on GitHub: 3.0.0 plus `SecretKey` re-exported next to `PublicKey`, nothing else. air_server moves from `ec6ac1f` (1.0.0, which named AIR as `path = "../air"`) to `efef621` (tag `v1.0.1`, "Release air_server 1.0.1 with persisted server identities"), which takes `air` 3.0.0 from crates.io; a `[patch.crates-io]` in `Cargo.toml` points that at the pinned AIR so one `air` is built. So `seal` and `air-client` build from GitHub with no local patch, and the commented local patches for AIR and air_server are gone. A crate that depends on sp-wire with `air-client` needs the same `[patch.crates-io]` block. No byte on the wire changes; `WIRE_VERSION` stays 3. Tests: 134, unchanged.

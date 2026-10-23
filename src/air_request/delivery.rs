@@ -449,10 +449,10 @@ mod transport {
         read_secs: u64,
         wait_secs: u64,
     ) -> Result<Vec<Option<Vec<u8>>>, AirError> {
-        // `PublicKey` is cloned for each call: the client takes it by value.
+        // `PublicKey` is `Copy`, so each call gets its own: the client takes it by value.
         let mut found: Vec<Option<Vec<u8>>> = Vec::with_capacity(addresses.len());
         for address in addresses {
-            found.push(client::read_once(client, address.clone(), read_secs).await?);
+            found.push(client::read_once(client, *address, read_secs).await?);
         }
         let missing: Vec<usize> = (0..addresses.len())
             .filter(|&i| found[i].is_none())
@@ -463,7 +463,7 @@ mod transport {
         let (tx, mut rx) = unbounded_channel();
         let mut held = Vec::with_capacity(missing.len());
         for &i in &missing {
-            held.push(client::hold(client, addresses[i].clone(), i as u32, tx.clone()).await);
+            held.push(client::hold(client, addresses[i], i as u32, tx.clone()).await);
         }
         drop(tx);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_secs);
