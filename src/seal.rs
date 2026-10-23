@@ -70,10 +70,8 @@ impl fmt::Display for SealError {
 impl Error for SealError {}
 
 // AIR 3.0.0 (ff41c09) does not export `SecretKey`. The line below needs the AIR
-// commit that adds it next to `PublicKey` (branch `air3-export-secretkey`, to be
-// proposed upstream); until then it builds with the patch in the README. When
-// upstream has merged it, the `rev` in Cargo.toml moves to the merged commit and
-// this note goes.
+// commit that adds it next to `PublicKey`, eae5133 on AIR's branch
+// `air3-export-secretkey`, which is the pin in Cargo.toml.
 #[cfg(feature = "seal")]
 pub use air::{PublicKey, SecretKey};
 

@@ -57,8 +57,8 @@
 //! # Features
 //!
 //! `air-request` needs AIR (it implies `seal`). `air-client` adds the transport
-//! and needs `air_server` and `tokio`; `air_server` depends on `../air` by path,
-//! so it can only be built with the local patches described in the README.
+//! and needs `air_server` and `tokio`, with air_server's `air` patched to the
+//! pinned AIR (README, "The AIR request").
 
 pub mod addr;
 pub mod delivery;

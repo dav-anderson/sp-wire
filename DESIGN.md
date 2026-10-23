@@ -335,9 +335,10 @@ module is private, and `PublicKey` is exported from the crate root while
 mint's `mint_did_key.json`), and it is the same type psp-mint and the wallet use
 through `sp_wire::seal`. A stand-in type would have been a different public type
 with its own key-file reader, so it was not written; the export is a one-word
-change in AIR (`SecretKey` next to `PublicKey` in `src/lib.rs`), made on a local
-branch of AIR and to be proposed upstream. Until it is merged the build needs a
-local patch (README), and the pin then moves to the merged commit.
+change in AIR (`SecretKey` next to `PublicKey` in `src/lib.rs`). It is `eae5133` on
+AIR's branch `air3-export-secretkey` on GitHub (3.0.0 plus that commit), which is
+the pin, so no patch is needed; when the branch is merged, the pin can move to the
+merged commit.
 
 `PublicKey` Display and FromStr are the 33-byte compressed hex (66 characters),
 the same as the DID, so the published mint key and the DID in the payload did not
@@ -350,4 +351,6 @@ AIR (2.0.3, 2.1.0 and 3.0.0) uses `secp256k1` 0.31 and this crate (like mint-cor
 keys are AIR's own types, and the rest of the wire is `secp256k1` 0.30. AIR 2.0.3
 needed its default feature `stream` to stay on; 2.1.0 and 3.0.0 have no such feature. AIR 3.0.0 changed only
 `channel.rs`, which this crate does not use, and air_server 1.0.0 changed only its
-version and its dependency on AIR 3.0.0.
+version and its dependency on AIR 3.0.0. air_server 1.0.1 takes AIR from crates.io
+and keeps the server identity across restarts; `[patch.crates-io]` makes it use the
+pinned AIR (README, "The AIR request").

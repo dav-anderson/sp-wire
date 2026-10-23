@@ -81,25 +81,16 @@ which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
 `mint-types` at mint-core `v0.1.3`. With `seal`, AIR is pinned by commit
-(`ff41c09`, 3.0.0; AIR's only tag is `v2.1.0`, on `741b1cf`, and 3.0.0 has none). `air_server`
-(for `air-client`) is pinned by commit too (`ec6ac1f`, 1.0.0; its only tag is `v0.1.0`). AIR uses `secp256k1` 0.31 and this crate
+(`eae5133` on AIR's branch `air3-export-secretkey`: 3.0.0 plus the `SecretKey` export;
+AIR's only tag is `v2.1.0`, on `741b1cf`). `air_server` (for `air-client`) is pinned by
+commit too (`efef621`, its tag `v1.0.1`). AIR uses `secp256k1` 0.31 and this crate
 0.30; see [DESIGN.md](DESIGN.md) for why that is safe. The crate needs rustc 1.93
 or later.
 
-**AIR 3.0.0 does not export `SecretKey`, so `seal` does not build from `ff41c09`
-alone.** The fix is one word in AIR's `src/lib.rs` (`SecretKey` next to
-`PublicKey` in the `pub use names::secp256k1::{...}` line), made on the branch
-`air3-export-secretkey` (3.0.0 plus that commit) of a local AIR checkout and not yet in upstream. Until it is, put
-this in `.cargo/config.toml` in this folder (git-ignored; never commit it), with the
-path of that checkout:
-
-```toml
-[patch."https://github.com/ramp-stack/air"]
-air = { path = "/path/to/air" }
-```
-
-When upstream has merged the export, the final pin is that merged commit: the
-`rev` in `Cargo.toml` moves to it and the patch is no longer needed.
+**`SecretKey` comes from AIR's branch `air3-export-secretkey`.** AIR 3.0.0 (`ff41c09`)
+does not export it; `eae5133` adds it next to `PublicKey` in `src/lib.rs`, and nothing
+else. It is on GitHub, so `seal` builds from git with no patch. The branch is not
+merged into AIR's `master`; when it is, the pin can move to the merged commit.
 
 ## The AIR request
 
@@ -195,16 +186,14 @@ forge one. It rides `WIRE_VERSION` 3, with no bump.
 - **Port 5702.** The AIR client always dials 5702 for `ws` (upstream item 12), so a
   test server cannot take a free port: `local_server::start` needs it free and says
   so when it is not. Test binaries run one after another, so each finds it free.
-- **`air-client` needs two local patches** while `air_server` names AIR as
-  `path = "../air"` (upstream issue 3 in FINDINGS): AIR and `air_server` must be
-  checkouts beside each other, and the AIR patch path must be the folder
-  `<air_server>/../air`, or two `air` crates are built and their types do not match:
+- **One `air` for `air-client`.** `air_server` 1.0.1 takes `air` 3.0.0 from crates.io.
+  The `[patch.crates-io]` in `Cargo.toml` points it at the AIR this crate pins, or two
+  `air` crates are built and their types do not match. A crate that depends on sp-wire
+  with `air-client` needs the same block in its own `Cargo.toml`:
 
 ```toml
-[patch."https://github.com/ramp-stack/air"]
-air = { path = "/path/to/sandbox-mint/air-sandbox/air" }
-[patch."https://github.com/ramp-stack/air_server"]
-air_server = { path = "/path/to/sandbox-mint/air-sandbox/air_server" }
+[patch.crates-io]
+air = { git = "https://github.com/ramp-stack/air", rev = "eae5133414fca493fa80ab3facf28248df9ad65d" }
 ```
 
 ## Build and test
@@ -212,7 +201,7 @@ air_server = { path = "/path/to/sandbox-mint/air-sandbox/air_server" }
     cargo test --all-features
     cargo fmt --check
 
-`--all-features` includes `air-client`, so it needs the two patches above and
+`--all-features` includes `air-client`, so it needs
 port 5702 free (see "The AIR request"). Without them, test the other features by
 name, for example `cargo test --features seal`.
 
@@ -224,8 +213,6 @@ and do not commit it:
 [patch."https://github.com/dav-anderson/mint-core.git"]
 mint-types = { path = "/path/to/mint-core-v0.1.3/crates/mint-types" }
 ```
-
-(The AIR patch above goes in the same file for as long as it is needed.)
 
 The top-level README in `sandbox-mint` has the recipe across all repos and the
 `local-git.sh` script, which is the simpler way to test against unpushed tags.
