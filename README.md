@@ -18,6 +18,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `keyset` | the key-set ID (8 bytes, 16 hex characters), the PSP's `keyset_id`, `KeysetWindow`, `RotationResponse` (`GET /rotation`) |
 | `payload` | the PSP OP_RETURN payload: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
 | `seal` | the sealed payload's format (a constant 80 bytes of overhead: the 64-byte sender key and the 16-byte tag) and, with the `seal` feature, `encrypt`, `decrypt`, `parse_public_key` |
+| `melt` | `MeltRequest` and `MeltResponse`, the bodies of the PSP's `POST /melt` (the ESP mint calls it) |
 | `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response`, and the file that hands the PSP a spend paid to the SPI's wallet (`PspHandover`, `HandedPspNote`) |
 | `esp` | `exchange`, `transfer`, `redeem` (the binary request and its reply), `rollover`, `queue` views, `terms`, `hash_keysets`, and `handover`, the file that hands ESP notes to a service (`Handover`, `HandedNote`) |
 | `fsp` | `IssueRequest`/`Response`, `SpendRequest`/`Response`, `KeysResponse`, `FeesResponse`, `Refusal` |
@@ -30,8 +31,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 
 The note, nonce, blinded output and mint input/output types are mint-core's
 (`mint_types`). sp-wire depends on that crate at its release tag and re-exports
-the types, so there is one definition of them. It does not depend on `mint-core`
-or `mint-server`.
+the types, so there is one definition of them. It does not depend on `mint-core`.
 
 The request hashes (`request_hash`, `hash`, `digest`) live here with the types
 they cover: they are part of the wire, because a retry gets its stored answer by
@@ -88,7 +88,7 @@ requests over AIR (mint info, keys, keysets, rotation, rollover, check-state, an
 which needs `air_server` and `tokio`; see "The AIR request".
 
 Dependencies are by git tag, so a clone builds the code that was tested:
-`mint-types` at mint-core `v0.1.3`. With `seal`, AIR is pinned by commit
+`mint-types` at mint-core `v0.2.0`. With `seal`, AIR is pinned by commit
 (`eae5133` on AIR's branch `air3-export-secretkey`: 3.0.0 plus the `SecretKey` export;
 AIR's only tag is `v2.1.0`, on `741b1cf`). `air_server` (for `air-client`) is pinned by
 commit too (`efef621`, its tag `v1.0.1`). AIR uses `secp256k1` 0.31 and this crate
@@ -219,7 +219,7 @@ and do not commit it:
 
 ```toml
 [patch."https://github.com/dav-anderson/mint-core.git"]
-mint-types = { path = "/path/to/mint-core-v0.1.3/crates/mint-types" }
+mint-types = { path = "/path/to/mint-core-v0.2.0/crates/mint-types" }
 ```
 
 The top-level README in `sandbox-mint` has the recipe across all repos and the

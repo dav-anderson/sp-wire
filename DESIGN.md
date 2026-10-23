@@ -17,7 +17,7 @@ is for the mints and the wallet to build on this type: a spend fsynced to the mi
 beyond that, it should move out of this crate. The note, nonce, blinded output and mint input/output
 types are mint-core's (`mint_types`); sp-wire depends on that crate at its
 release tag and re-exports them, so there is one definition. It does not depend
-on `mint-core` or `mint-server`.
+on `mint-core`.
 
 The request hashes (`request_hash`, `hash`, `digest`) live here with the types they
 cover. They are part of the wire, because a retry gets its stored answer by hash.

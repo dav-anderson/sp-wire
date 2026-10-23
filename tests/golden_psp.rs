@@ -8,11 +8,12 @@ use mint_types::{Amount, BlindNonce, MintInput, MintOutput, MintOutputOutcome, N
 use secp256k1::schnorr::Signature;
 use secp256k1::{Keypair, PublicKey, SECP256K1};
 use sp_wire::keyset::{KEYSET_LEN, KeysetWindow, RotationResponse, keyset_id};
+use sp_wire::melt::MeltRequest;
 use sp_wire::payload::{self, DID_LEN, Payload};
 use sp_wire::psp::{
-    Burn, BurnsRequest, BurnsResponse, KeysetsResponse, MeltRequest, PspMeltRequest,
-    PspSpendRequest, PspSpendResponse, ReconcileRequest, ReconcileResponse, RolloverRequest,
-    RolloverResponse, SignedOutput,
+    Burn, BurnsRequest, BurnsResponse, KeysetsResponse, PspMeltRequest, PspSpendRequest,
+    PspSpendResponse, ReconcileRequest, ReconcileResponse, RolloverRequest, RolloverResponse,
+    SignedOutput,
 };
 
 const GOLDEN: &str = include_str!("golden/psp.txt");

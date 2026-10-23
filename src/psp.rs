@@ -6,18 +6,12 @@ use mint_types::{MintInput, MintOutput, MintOutputOutcome, Nonce};
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 
-/// `POST /melt` of mint-core: the notes to burn and a memo.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MeltRequest {
-    pub inputs: Vec<MintInput>,
-    pub memo: String,
-}
-
-/// `POST /melt`: mint-core's melt request plus the keyset of each input.
+/// `POST /melt`: the melt request ([`crate::melt::MeltRequest`]) plus the keyset
+/// of each input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PspMeltRequest {
     #[serde(flatten)]
-    pub melt: MeltRequest,
+    pub melt: crate::melt::MeltRequest,
     /// The keyset each input note carries, in order. Each note is verified,
     /// and looked up in the spent list, of the keyset it names.
     #[serde(default)]

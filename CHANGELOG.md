@@ -3,6 +3,8 @@
 ## 0.5.1 (unreleased)
 
 - **New: `psp::PspHandover` and `psp::HandedPspNote`** (no feature): the file in which psp-mint hands the SPI's ecash-wallet the PSP a spend paid and the mint reissued (burning is opt-in), with `PspHandover::read` and `units`. Pinned by a test, as `esp::handover` is. Dependents move their pin from `v0.5.0` to the tag of this version, and their `Cargo.lock`.
+- **New: `melt::MeltRequest { inputs, memo }` and `melt::MeltResponse { burned }`** (no feature): the bodies of the PSP's `POST /melt`, the same JSON as before. They were mint-core's server crate's `api::MeltRequest` and `api::MeltResponse`, and esp-mint, psp-mint and the tests of ecash-wallet took them from there; that crate is gone (mint-core 0.2.0). `psp::MeltRequest` is gone (breaking, before any release): there is one name, `melt::MeltRequest`, and `psp::PspMeltRequest` (unchanged on the wire) holds it. Use `sp_wire::melt::MeltRequest`. `keys::KeysResponse`, `CheckStateRequest` and `CheckStateResponse` already were the definitions psp-mint and the wallet use; their docs no longer name mint-core's server.
+- **Changed: `mint-types` is pinned to mint-core `v0.2.0`** (from `v0.1.3`; nothing in `mint-types` changed). esp-mint needs this version of sp-wire for the melt types; psp-mint and ecash-wallet stay on `v0.5.1`; fsp-mint and spi stay on `v0.5.0`.
 - Doc change: `PspSpendRequest` and `PspSpendResponse` no longer say the mint burns `pay`; it reissues it unless burning is on.
 
 ## 0.5.0 (unreleased)

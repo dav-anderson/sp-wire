@@ -1,6 +1,7 @@
-//! Bodies of the routes every mint serves from mint-core's server: `GET /keys`
-//! and `POST /check-state`. They are the same JSON as mint-core's own types, so
-//! a wallet can speak to a mint without linking mint-core's server crate.
+//! Bodies of the routes every mint serves: `GET /keys` and `POST /check-state`.
+//! A wallet can speak to a mint without linking any mint crate. (mint-core's
+//! own server crate, which defined them first, is gone: these are the
+//! definitions.)
 
 use std::collections::BTreeMap;
 
@@ -32,7 +33,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_bodies_are_the_json_mint_core_serves() {
+    fn the_bodies_are_the_json_the_mints_serve() {
         let r = CheckStateResponse {
             spent: vec![true, false],
         };
