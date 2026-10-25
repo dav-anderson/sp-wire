@@ -1,6 +1,6 @@
 [package]
 name = "sp-wire"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT"
@@ -19,7 +19,7 @@ air-client = ["air-request", "dep:air_server", "dep:tokio"]
 
 [dependencies]
 # mint-core is pinned to its release tag; only its types crate is used.
-mint-types = { git = "https://github.com/dav-anderson/mint-core.git", tag = "v0.2.0" }
+mint-types = { git = "https://github.com/dav-anderson/mint-core.git", tag = "v0.3.0" }
 secp256k1 = { version = "0.30", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -43,7 +43,7 @@ secp256k1 = { version = "0.30", default-features = false, features = ["global-co
 # Do not commit it uncommented. See the README.
 #
 # [patch."https://github.com/dav-anderson/mint-core.git"]
-# mint-types = { path = "../mint-core-v0.2.0/crates/mint-types" }
+# mint-types = { path = "../mint-core-v0.3.0/crates/mint-types" }
 
 # air_server's `air` (crates.io 3.0.0) is the AIR pinned above, or two `air` crates are
 # built and their types do not match. A crate that depends on sp-wire with `air-client`

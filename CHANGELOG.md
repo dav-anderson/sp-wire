@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2 (2026-10-25): `mint-types` is pinned to mint-core v0.3.0 (ROADMAP item 31, P1-02)
+
+- **Changed: `mint-types` is pinned to mint-core `v0.3.0`** (from `v0.2.0`). `Amount` has no `Add` or `AddAssign` there (`Amount::checked_add` instead); nothing in sp-wire added amounts with `+`, and no type, JSON body or golden test changed. No wire change.
+
 ## 0.5.1 (unreleased)
 
 - **New: `psp::PspHandover` and `psp::HandedPspNote`** (no feature): the file in which psp-mint hands the SPI's ecash-wallet the PSP a spend paid and the mint reissued (burning is opt-in), with `PspHandover::read` and `units`. Pinned by a test, as `esp::handover` is. Dependents move their pin from `v0.5.0` to the tag of this version, and their `Cargo.lock`.
