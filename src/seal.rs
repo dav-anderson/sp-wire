@@ -23,7 +23,7 @@
 //! payload cannot be told from noise until the tag has failed or passed.
 //!
 //! The mint's own key is published as 33 bytes of compressed hex
-//! ([`parse_public_key`], the same as the DID key in the payload). AIR keeps
+//! ([`parse_public_key`], the same form as the claim DID in the payload). AIR keeps
 //! that text form (`Display` and `FromStr`); its binary and serde form is the
 //! 64-byte ElligatorSwift one, which this crate never writes out.
 //!

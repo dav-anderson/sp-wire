@@ -40,10 +40,6 @@ pub fn as_note_amount(units: u128) -> Option<u64> {
 /// ESP units in one US dollar: 10 PSP are $1, which is 10^12 ESP.
 pub const ESP_PER_USD: u128 = 1_000_000_000_000;
 
-/// The largest PSP denomination, 2^24. Denominations are the powers of two from
-/// 1 to this, 25 keys in all.
-pub const MAX_PSP_DENOMINATION: u64 = 16_777_216;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,14 +52,13 @@ mod tests {
         // 10 PSP = 1 USD = 10^12 ESP
         assert_eq!(psp_to_esp(10), 1_000_000_000_000);
         assert_eq!(psp_to_esp(10), 10u128.pow(12));
-        // the largest PSP denomination, 2^24
+        // a larger amount converts the same way
         assert_eq!(psp_to_esp(16_777_216), 1_677_721_600_000_000_000);
-        // The constants themselves: ten PSP to the dollar, the largest
-        // denomination and the largest PSP amount that fits one note.
+        // The constants themselves: ten PSP to the dollar and the largest PSP
+        // amount that fits one note.
         assert_eq!(ESP_PER_PSP, 100_000_000_000);
         assert_eq!(ESP_PER_USD, 1_000_000_000_000);
         assert_eq!(10 * u128::from(ESP_PER_PSP), ESP_PER_USD);
-        assert_eq!(MAX_PSP_DENOMINATION, 1 << 24);
         assert_eq!(MAX_PSP_PER_NOTE, 184_467_440);
     }
 

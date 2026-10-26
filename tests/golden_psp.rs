@@ -9,11 +9,11 @@ use secp256k1::schnorr::Signature;
 use secp256k1::{Keypair, PublicKey, SECP256K1};
 use sp_wire::keyset::{KEYSET_LEN, KeysetWindow, RotationResponse, keyset_id};
 use sp_wire::melt::MeltRequest;
-use sp_wire::payload::{self, DID_LEN, Payload};
+use sp_wire::payload::{self, DID_LEN};
 use sp_wire::psp::{
-    Burn, BurnsRequest, BurnsResponse, KeysetsResponse, PspMeltRequest, PspSpendRequest,
-    PspSpendResponse, ReconcileRequest, ReconcileResponse, RolloverRequest, RolloverResponse,
-    SignedOutput,
+    Burn, BurnsRequest, BurnsResponse, CLAIM_WINDOW_SECS, ClaimRequest, ClaimResponse,
+    KeysetsResponse, PspMeltRequest, PspSpendRequest, PspSpendResponse, RolloverRequest,
+    RolloverResponse, SignedOutput,
 };
 
 const GOLDEN: &str = include_str!("golden/psp.txt");
@@ -91,36 +91,15 @@ fn the_psp_wire_bytes_are_unchanged() {
     pk.insert(Amount::from_units(2), key(11));
     line("keyset_id", keyset_id(&pk));
 
-    // The OP_RETURN payload, with and without a keyset.
-    let outputs = vec![output(1, 20), output(1024, 21), output(16_777_216, 22)];
-    let with = Payload {
-        did: [7u8; DID_LEN],
-        outputs: outputs.clone(),
-        keyset: Some("0102030405060708".into()),
-    };
-    let without = Payload {
-        did: [7u8; DID_LEN],
-        outputs,
-        keyset: None,
-    };
-    line(
-        "payload_with_keyset",
-        hex::encode(payload::encode(&with).unwrap()),
-    );
-    line(
-        "payload_no_keyset",
-        hex::encode(payload::encode(&without).unwrap()),
-    );
-
-    // The golden payload also decodes back.
+    // The OP_RETURN payload: the claim DID, 33 bytes, and nothing else.
+    let payload_bytes = payload::encode(&key(7).serialize()).unwrap();
+    line("payload", hex::encode(&payload_bytes));
     assert_eq!(
-        payload::decode(&payload::encode(&with).unwrap()).unwrap(),
-        with
+        payload::decode(&payload_bytes).unwrap().claim_did,
+        sp_wire::ServiceDid::from(key(7))
     );
-    assert_eq!(
-        payload::decode(&payload::encode(&without).unwrap()).unwrap(),
-        without
-    );
+    // The claim window is 30 days.
+    line("CLAIM_WINDOW_SECS", CLAIM_WINDOW_SECS);
 
     #[cfg(feature = "seal")]
     sealed_payload();
@@ -168,21 +147,27 @@ fn the_psp_wire_bytes_are_unchanged() {
         },
     );
 
-    // Reconcile (AIR kind 15): two change notes, signed by the reply key.
-    let reconcile = ReconcileRequest {
-        reply_did: sp_wire::ServiceDid::from(key(90)),
-        purchase: [0x55; 32],
+    // Purchase claim (AIR kind 15): two notes, signed by the claim key.
+    let claim = ClaimRequest {
+        claim_did: sp_wire::ServiceDid::from(key(90)),
+        record_id: [0x55; 32],
         keyset: "2122232425262728".into(),
         outputs: vec![output(4, 130), output(2, 131)],
         signature: sig(0x99),
     };
-    json("ReconcileRequest", &reconcile);
-    line("ReconcileRequest_digest", hex::encode(reconcile.digest()));
-    line("ReconcileRequest_hash", reconcile.hash());
+    json("ClaimRequest", &claim);
+    // The digest covers the PSP's DID: the same claim signed for another PSP has
+    // another digest and another hash.
+    let psp = sp_wire::ServiceDid::from(key(91));
+    line("ClaimRequest_digest", hex::encode(claim.digest(&psp)));
+    line("ClaimRequest_hash", claim.hash(&psp));
+    let other = sp_wire::ServiceDid::from(key(92));
+    assert_ne!(claim.digest(&psp), claim.digest(&other));
+    assert_ne!(claim.hash(&psp), claim.hash(&other));
     // and it reads back
     assert_eq!(
-        serde_json::from_str::<ReconcileRequest>(expected("ReconcileRequest")).unwrap(),
-        reconcile
+        serde_json::from_str::<ClaimRequest>(expected("ClaimRequest")).unwrap(),
+        claim
     );
     let mut unit_keys = BTreeMap::new();
     unit_keys.insert(4u64, key(150));
@@ -190,8 +175,8 @@ fn the_psp_wire_bytes_are_unchanged() {
     let mut live = BTreeMap::new();
     live.insert("2122232425262728".to_string(), unit_keys);
     json(
-        "ReconcileResponse",
-        &ReconcileResponse {
+        "ClaimResponse",
+        &ClaimResponse {
             keyset: "2122232425262728".into(),
             signatures: vec![
                 SignedOutput {
@@ -209,11 +194,8 @@ fn the_psp_wire_bytes_are_unchanged() {
                 keysets: live,
             },
             issued_units: 6,
-            fee_units: 2,
-            read_prepaid_units: 1,
+            read_prepaid_units: 2,
             write_prepaid_units: 1,
-            kept_cents: 5,
-            given_cents: 0,
         },
     );
 

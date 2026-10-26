@@ -14,19 +14,19 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 
 | Module | Holds |
 | --- | --- |
-| `units` | `ESP_PER_PSP` (10^11), `ESP_PER_USD` (10^12), `MAX_PSP_PER_NOTE`, `MAX_PSP_DENOMINATION` (2^24, the default top note; a PSP's own top is the highest key in its `GET /keys`), the PSP-to-ESP conversions |
+| `units` | `ESP_PER_PSP` (10^11), `ESP_PER_USD` (10^12), `MAX_PSP_PER_NOTE`, the PSP-to-ESP conversions |
 | `keyset` | the key-set ID (8 bytes, 16 hex characters), the PSP's `keyset_id`, `KeysetWindow`, `RotationResponse` (`GET /rotation`) |
-| `payload` | the PSP OP_RETURN payload: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
+| `payload` | the PSP OP_RETURN payload, the 33-byte claim DID and nothing else: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
 | `seal` | the sealed payload's format (a constant 80 bytes of overhead: the 64-byte sender key and the 16-byte tag) and, with the `seal` feature, `encrypt`, `decrypt`, `parse_public_key` |
 | `melt` | `MeltRequest` and `MeltResponse`, the bodies of the PSP's `POST /melt` (the ESP mint calls it) |
-| `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response`, and the file that hands the PSP a spend paid to the SPI's wallet (`PspHandover`, `HandedPspNote`) |
+| `psp` | `PspMeltRequest`, `Burn*`, `KeysetsResponse`, `RolloverRequest`/`Response`, `PspSpendRequest`/`Response`, `ClaimRequest`/`ClaimResponse` (the purchase claim, kind 15) with `CLAIM_WINDOW_SECS`, and the file that hands the PSP a spend paid to the SPI's wallet (`PspHandover`, `HandedPspNote`) |
 | `esp` | `exchange`, `transfer`, `redeem` (the binary request and its reply), `rollover`, `queue` views, `terms`, `hash_keysets`, and `handover`, the file that hands ESP notes to a service (`Handover`, `HandedNote`) |
 | `fsp` | `IssueRequest`/`Response`, `SpendRequest`/`Response`, `KeysResponse`, `FeesResponse`, `Refusal` |
 | `codes` | the `code` of an error body: `keyset_retired`, `unknown_keyset`, `keyset_not_current` (reserved: no mint sends it), `burn_not_proven`, `note_spent_elsewhere`, ... |
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check`, the check a wallet makes of the wire version a mint reports |
-| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, its rollover and check-state, and the PSP's delivery of a purchase (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
+| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, its rollover and check-state, and the PSP's owed record (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
@@ -55,7 +55,7 @@ holds the notes**: the SPI's ecash-wallet swaps them for notes of its own with
 
 ## wire_version
 
-`WIRE_VERSION` is a single integer, currently 3. Every mint reports it as
+`WIRE_VERSION` is a single integer, currently 4. Every mint reports it as
 `wire_version` in its mint info (see "The AIR request" below), and a wallet
 refuses a mint whose number is not its own, or that reports none, with an error
 that names both (`version::check`).
@@ -133,9 +133,9 @@ envelope again: its mint info, keys (`fsp::KeysResponse`), fees (`fsp::FeesRespo
 and rotation are kinds 1, 2, 7 and 4, and it adds `KIND_FSP_ISSUE` 11
 (`fsp::IssueRequest`) and `KIND_FSP_SPEND` 12 (`fsp::SpendRequest`), JSON bodies. The PSP mint adds `KIND_PSP_SPEND` 14 (a spend with
 change: notes in, change out, an amount paid that the mint burns; JSON body,
-`psp::PspSpendRequest`) and `KIND_PSP_RECONCILE` 15 (the corrected request or the
-credit claim for an open payment; JSON body, `psp::ReconcileRequest`, signed by the
-purchase's reply key; the PSP answers only a request it accepts, see `Served::Ignored`).
+`psp::PspSpendRequest`) and `KIND_PSP_CLAIM` 15 (the one claim of a purchase, for the
+units an owed record says; JSON body, `psp::ClaimRequest`, signed by the purchase's
+claim key over `digest(psp)`, which covers the PSP mint's DID; the PSP answers only a claim it accepts, see `Served::Ignored`).
 The envelope does not read a body.
 The design and the reasons for every choice are `air-sandbox/REQUEST-DESIGN.md` in
 sandbox-mint; this module is that design. In short: the wallet writes a sealed
@@ -143,7 +143,7 @@ request into a numbered mailbox of the mint's DID (anyone can write a slot, only
 the mint can open it), the mint answers in a reply cell only the wallet and the
 mint can compute (`r.shared(mint) == mint.shared(R)`), and the reply carries the
 mint's BIP340 signature, so an untrusted AIR server can withhold a reply but not
-forge one. It rides `WIRE_VERSION` 3, with no bump.
+forge one. It rides `WIRE_VERSION` 4 (kinds 13 and 15 are the owed record and the purchase claim from version 4; the rest is as in version 3).
 
 - **Feature `air-request`** (implies `seal`): the pure parts. Envelopes
   (`envelope`), addresses, sealing and signature bytes (`addr`), `MintInfo`. No
@@ -160,37 +160,40 @@ forge one. It rides `WIRE_VERSION` 3, with no bump.
   version and network: read the reply cell first, write a request into the first
   free slot, wait, retry with the same `request_id` and `r`, verify), and
   `local_server`, an `air_server` started in the test process.
-- **The delivery of a purchase (`air_request::delivery`).** The one call that goes
-  the other way: the PSP writes, the wallet reads. After it settles a payment the
-  PSP writes **one record** to the SPI's AIR server holding the purchase's
-  signatures and the PSP's live keysets, or that it holds the payment (`Held`), or
-  the reason it rejected the purchase (`Refused`), the last two with what it
-  received and until when it keeps the payment open (`open_until`), signed by
-  its DID key and sealed to the purchase's one-off reply DID. The address is
-  `sha256("sp-air-delivery-v0" || PSP DID || reply DID || purchase)`, where
-  `purchase = sha256("sp-psp-purchase-v0" || the unsealed payload)` (`purchase_id`,
-  `delivery_address`, `delivery_secret`); only the wallet and the PSP can compute
-  it, and the cell is write-once. `build_record` makes the sealed record and
-  `open_record` checks it (the PSP's signature, that it answers this purchase and
-  this reply DID; no freshness limit, since it may be read days later). With
-  `air-client`, `write_record` (`Created`, `AlreadyStored` or `Different`: a write to
-  a taken cell is answered as a read, so an unacknowledged write that got through
-  is found stored), `read_record` and `read_records` (every address once, then the
-  missing ones held together under one deadline). `KIND_PSP_DELIVERY` (13) is a hash
-  domain only and is never served. See `air-sandbox/REQUEST-DESIGN.md` section 18.
-  **The first delivery states the rules.** A record that opens a reconciliation window
-  (a held payment, a rejection with a readable payload, a purchase signed with a
-  credit) carries `rules` (`ReconcileRules`): `send` (`corrected_request` or
-  `credit_claim`), `kind` 15, the exact `due_units` the request's outputs must add up
-  to after every fee, the fee and prepaid read and write costs, `open_until`,
-  `max_attempts`, and `on_failure` (`FORFEIT_NOTICE`: if reconciliation fails or is not
-  done by `open_until`, the payment is forfeited and the funds are lost; a refused
-  request gets no reply). The rules are a fallback for a fallback: ecash-wallet
-  reconciles automatically, checks its request against them before sending, and should
-  never fail. They are written out for a developer or user who buys PSP with
-  nonstandard, self-built tooling, as one last chance to get it right before the funds
-  are lost. They are those in force when the window opened, and absent (`None`) on a
-  closed purchase and in a record written before they existed.
+- **The owed record (`air_request::delivery`).** The one call that goes the other
+  way: the PSP writes, the wallet reads. The payment carries a throwaway claim key
+  (`payload`, 33 bytes, sealed to the PSP). At the confirmation tier its locked USD
+  value sets, the PSP writes **one record** to the SPI's AIR server saying what it
+  owes (`Owed`: the `txid`, what was paid, the PSP's live keysets and the
+  `ClaimTerms`), signed by its DID key and sealed to the claim DID. A claim key may
+  pay more than once, so the `n`th record (from 0, in the order written) is at
+  `sha256("sp-psp-owed-v0" || PSP DID || claim DID || u32 n)` (`owed_address`,
+  `owed_secret`) and the claim names it by `record_id`, `sha256("sp-psp-owed-id-v0"
+  || claim DID || u32 n)`; the wallet reads from 0 until a cell is empty.
+  Only the wallet and the PSP can compute an address, and the cell is write-once.
+  `build_record` makes the sealed record and `open_record` checks it (the PSP's
+  signature, that it answers this record id and this claim DID; no freshness limit,
+  since it may be read days later). With `air-client`, `write_record` (`Created`,
+  `AlreadyStored` or `Different`: a write to a taken cell is answered as a read, so
+  an unacknowledged write that got through is found stored), `read_record` and
+  `read_records` (every address once, then the missing ones held together under one
+  deadline). `KIND_PSP_DELIVERY` (13) is a hash domain only and is never served. See
+  `air-sandbox/REQUEST-DESIGN.md` section 18.
+  **The owed record states the terms.** `ClaimTerms`: `send` (`purchase_claim`),
+  `kind` 15, the exact `due_units` the claim's outputs must add up to (the units the
+  payment buys at the locked price, less the prepaid read and write costs, floored at
+  0), `read_prepaid_units` and `write_prepaid_units`, `window_secs`
+  (`psp::CLAIM_WINDOW_SECS`, 30 days: a constant, not a setting, counted from when
+  the record is stored on AIR), `max_attempts`, and `on_expiry` (`EXPIRY_NOTICE`: if
+  the purchase is not claimed within `window_secs` of the record being stored, the
+  PSP keeps the payment; a refused claim gets no reply). A wallet claims as soon as
+  it reads the record and keeps the claim key at least until its first read plus
+  `window_secs`. The record carries no keysets: the wallet asks kind 4 for the
+  current keyset before it claims, and a claim must name that one. The terms are a fallback for a
+  fallback: ecash-wallet claims automatically, checks its claim against them before
+  sending, and should never fail. They are written out for a developer or user who
+  buys PSP with nonstandard, self-built tooling, as one last chance to get it right
+  before the funds are lost. They are those in force when the record was written.
 - **Port 5702.** The AIR client always dials 5702 for `ws` (upstream item 12), so a
   test server cannot take a free port: `local_server::start` needs it free and says
   so when it is not. Test binaries run one after another, so each finds it free.

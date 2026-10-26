@@ -10,12 +10,12 @@
 //! - [`keyset`]: the key-set ID and the `GET /rotation` body.
 //! - [`keys`]: `GET /keys` and `POST /check-state`, the bodies every mint serves.
 //! - [`melt`]: `POST /melt`, the PSP mint's burn call, which the ESP mint makes.
-//! - [`payload`] and [`seal`]: the PSP OP_RETURN payload and its encryption.
+//! - [`payload`] and [`seal`]: the PSP OP_RETURN payload (the claim DID) and its encryption.
 //! - [`psp`], [`esp`] and [`fsp`]: the request and response bodies of each mint.
 //! - [`codes`]: the `code` of an error body.
 //! - [`service`]: [`ServiceDid`], the service ID: an AIR DID, 33 bytes, 66 hex characters.
 //! - `air_request` (feature `air-request`, with `air-client` for the transport): the first request
-//!   between two parties over AIR, mint info with a mint-signed reply. Rides [`WIRE_VERSION`] 3.
+//!   between two parties over AIR, mint info with a mint-signed reply. Rides [`WIRE_VERSION`] 4.
 //! - [`version`]: [`WIRE_VERSION`] and the check a wallet makes of the wire version a mint reports.
 //! - [`storage`]: the storage policy (an ordered list of service IDs per kind of
 //!   data), its parser and its checks. Not part of the wire.

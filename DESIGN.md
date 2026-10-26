@@ -34,7 +34,8 @@ The goldens in `tests/golden/*.txt` were captured from the v0.1.0 mints before
 this crate existed, so that moving the types out of the mints provably changed no
 byte. They are the specification. The only lines that have moved since are the
 sealed-payload ones (wire version 2, below), the ones that carry a service ID
-(wire version 3, below) and the two request hashes that gained the note
+(wire version 3, below), the payload and kind 15 ones (wire version 4, below) and
+the two request hashes that gained the note
 signatures (`SpendRequest_hash` and `transfer_request_hash`, below). Those two
 were recomputed independently with Python's `hashlib`, which first reproduced the
 old values from the same inputs.
@@ -191,42 +192,50 @@ matters for this crate:
   `WIRE_VERSION` bump: nothing that exists is re-encoded, and a mint that does not know
   kind 14 skips it like any unknown kind.
 
-- **The PSP's reconciliation is kind 15, and only an accepted request is answered.**
-  `KIND_PSP_RECONCILE` (15) carries the corrected request (a payment that was held or a
-  purchase that was rejected) and the credit claim (a purchase signed with a credit
-  owed): one kind, because the mint tells them apart by its record of the payment. The
-  body is `psp::ReconcileRequest` JSON (`reply_did`, `purchase`, `keyset`, `outputs`,
-  `signature`); the reply is `psp::ReconcileResponse`, the follow-up record. AIR
-  clients are anonymous (each connects with a one-off connection key), so the envelope
-  names no sender and the proof of the right to claim is in the body: a BIP340
-  signature by the purchase's reply key over `ReconcileRequest::digest()` (tag
-  `psp-mint/reconcile/v1`: the reply DID, the purchase id, the length-prefixed keyset,
-  and the count, amount and blind nonce of every output; lengths and counts are
-  4 bytes, amounts 8 bytes, all big-endian). Only the holder of the private half may
-  claim: a public key, even one only the payer and the PSP know, is never a secret.
-  This matches the ESP's `service_signature` and `spend_signature`. The envelope's `R`
-  is not checked; the wallet sets it to the reply key so that the answer is sealed to
-  it. `hash()` (tag `psp-mint/reconcile-request/v1`: the digest and the signature) keys
-  a stored answer and a counted refusal.
-  **No refusal replies.** Telling an asker why a request failed is a free read for
-  whoever holds the reply key, and tells a stranger nothing it should know, so a
-  request that is not accepted gets no reply at all. `Served::Ignored(reason)` is the
+- **The PSP's purchase claim is kind 15, and only an accepted claim is answered.**
+  `KIND_PSP_CLAIM` (15) carries the one claim of a purchase: the blinded notes for
+  the units a payment is owed. The body is `psp::ClaimRequest` JSON (`claim_did`,
+  `record_id`, `keyset`, `outputs`, `signature`); the reply is `psp::ClaimResponse`
+  (`keyset`, `signatures`, `keysets`, `issued_units`, `read_prepaid_units`,
+  `write_prepaid_units`). AIR clients are anonymous (each connects with a one-off
+  connection key), so the envelope names no sender and the proof of the right to
+  claim is in the body: a BIP340 signature by the purchase's claim key over
+  `ClaimRequest::digest(psp)` (tag `psp-mint/claim/v1`: the PSP mint's DID, the claim
+  DID, the record id, the length-prefixed keyset, and the count, amount and blind
+  nonce of every output; lengths and counts are 4 bytes, amounts 8 bytes, all
+  big-endian). The PSP's DID comes right after the tag, so a claim signed for one
+  PSP is worth nothing at another: a claim key reused across two PSPs (or a claim
+  replayed to a second mint that holds a record under the same record id) fails
+  the signature check there. The digest is not carried in the body: both sides
+  know the PSP's DID (the wallet paid to it; the mint is it), so it is an input,
+  not a field. The tag stays `v1`: this wire version was not released with the
+  old layout, so no signature made under it exists to be told apart. Only the holder
+  of the private half may claim: a public key, even one only the payer and the PSP
+  know, is never a secret. This matches the ESP's `service_signature` and
+  `spend_signature`. The envelope's `R` is not checked; the wallet sets it to the
+  claim key so that the answer is sealed to it. `hash(psp)` (tag
+  `psp-mint/claim-request/v1`: the digest and the signature) keys a stored answer and
+  a counted refusal. **The keyset is the current one.** A claim names the PSP's
+  current keyset (kind 4 gives it) and no other: the previous set, a retired set
+  and an unknown one are each refused (`keyset_not_current`, `keyset_retired`,
+  `unknown_keyset`), and none of the three counts as an attempt, since the wallet
+  can only be wrong by being late and can put it right by asking kind 4 again. The kind number and the digest and hash of the old
+  reconciliation (kind 15 up to wire version 3) are gone: it was a different body.
+  **No refusal replies.** Telling an asker why a claim failed is a free read for
+  whoever holds the claim key, and tells a stranger nothing it should know, so a
+  claim that is not accepted gets no reply at all. `Served::Ignored(reason)` is the
   fourth thing a mint can say to a request, beside `Body`, `Unavailable` and
   `Refused`: `answer_request` returns an error that carries the reason (for the mint's
   log) and builds no reply, so the listener writes nothing to the reply cell. A
   transient failure of the mint is ignored too, and the asker sends the identical
-  request again. The rules the request must follow are stated up front, in the first
-  delivery (`ReconcileRules`, carried by `Signed`, `Refused` and `Held` when the record
-  opens a window); see "The PSP's delivery of a purchase" below. The new codes
-  (`wrong_total`, `nothing_to_issue`, `unknown_denomination`, `duplicate_blind_nonce`,
-  `blind_nonce_used`, `bad_signature`, `unknown_payment`, `ambiguous_payment`,
-  `payment_closed`, `too_many_attempts`) are the mint's log and audit codes: no
-  refusal carries them to the asker. `SignedOutput` moved to `psp` so that
-  `ReconcileResponse` can name it without the `air-request` feature; it is still
-  exported from `air_request::delivery`. No `WIRE_VERSION` bump: nothing that exists is
-  re-encoded, `rules` is `serde(default)` and is not written when absent, so the bytes
-  of a record without it are as they were, and a mint that does not know kind 15 skips
-  it like any unknown kind.
+  claim again. The terms the claim must follow are stated up front, in the owed record
+  (`ClaimTerms`, carried by `Owed`); see "The PSP's owed record" below. The codes
+  (`wrong_total`, `unknown_denomination`, `duplicate_blind_nonce`, `blind_nonce_used`,
+  `bad_signature`, `unknown_owed`, `already_claimed`, `claim_expired`,
+  `too_many_attempts`, `in_progress`) are the mint's log and audit codes: no refusal
+  carries them to the asker. `SignedOutput` is in `psp` so that `ClaimResponse` can
+  name it without the `air-request` feature; it is also exported from
+  `air_request::delivery`. This is in wire version 4 (below).
 
 - **The ESP's calls are more kinds, not more envelope (7 to 10).** `KIND_FEES` (7),
   `KIND_EXCHANGE` (8), `KIND_TRANSFER` (9) and `KIND_REDEEM` (10) are constants and
@@ -239,64 +248,69 @@ matters for this crate:
   has the same three fields. The goldens pin the hash of each new kind, one of them
   with a binary body.
 
-## The PSP's delivery of a purchase (`air_request::delivery`)
+## The PSP's owed record (`air_request::delivery`)
 
-Every other AIR call here is a wallet asking and a mint answering. The delivery is
-the mint telling a payer something the payer never asked in a request: the
-signatures for a purchase, once it settles at six confirmations, or the reason it
-was rejected. The wallet knows the address in advance and reads it (held, if it
-likes), so it needs no mailbox and no request.
+Every other AIR call here is a wallet asking and a mint answering. The owed record
+is the mint telling a payer something the payer never asked in a request: that a
+payment reached its confirmation tier and what it is owed. The wallet knows the
+address in advance and reads it (held, if it likes), so it needs no mailbox and no
+request.
 
 - **The record is a reply envelope.** It answers a pseudo request that was never
-  sent: kind `KIND_PSP_DELIVERY` (13), `request_id` = the purchase id, `R` = the
-  reply DID, no body. The PSP signs it with its DID key (`build_reply`) and seals the
-  whole reply to the reply DID. Both sides can compute the question's hash, so
-  `verify_answer` binds a record to its purchase and reply DID with no new
-  signature code, and the same envelope rules apply as for the other replies. The
-  kind is a hash domain and is never served: a request of kind 13 in a mailbox is
-  not answered.
-- **What identifies the purchase.** `sha256("sp-psp-purchase-v0" || unsealed
-  payload)`. The PSP only has the opened payload (`seal::open_payloads` returns the
-  plaintext), a seal is randomised, and the wallet does not know the txid (any
-  wallet may make the payment), so neither the sealed bytes nor the txid can be the
-  id. The unsealed payload contains the reply DID, so two purchases never share an
-  id.
-- **The address.** `sha256("sp-air-delivery-v0" || PSP DID || reply DID ||
-  purchase)` is the cell secret, from which the cell's public key is derived like
-  the other reply cells. The reply DID is a one-off key made for the purchase and
-  known only to the wallet and (inside the sealed payload) the PSP, so a third
-  party cannot compute the address and fill the write-once cell first, and the PSP
-  cannot link two purchases of one wallet.
-- **Outcomes.** `STATUS_ANSWERED` carries `Signed { keyset, signatures,
-  keysets, skipped_units, credit_cents, open_until }`: the blind-nonce/signature
-  pairs, the PSP's live keysets (so the wallet needs no keys call, and unblinds with
-  the keys of the set that signed), the units the PSP did not sign because the
-  payment was short, a credit owed for an overpayment, and, when a credit is owed,
-  the end of the window it stays open for. The last three are `serde(default)`.
-  `STATUS_REFUSED` carries one of two bodies, told apart by a `kind` tag:
-  `Refused { reason, paid_sats, paid_cents, open_until }` (`"rejected"`: the
-  purchase was rejected and nothing was signed) and `Held { reason, paid_sats,
-  paid_cents, requested_units, over_under_bps, open_until }` (`"held"`: the PSP has
-  the payment and signed nothing, because the payment is short beyond its
-  reconciliation target). Both say what the PSP received, in satoshis and in US
-  cents at its price. `open_until` is Unix seconds: if the payment is not settled
-  by then the PSP forfeits it and keeps the bitcoin, and the payer may delete the
-  purchase and the key (0 means no window was named). `Outcome::open_until()` gives
-  the end of the window, or none. Both use the one refusal status because the
-  payer's reaction is the same (nothing signed, wait); `STATUS_UNAVAILABLE` is not
-  used. The PSP's window is a setting of the PSP, which the wallet learns from the
-  record.
-- **The rules.** A record that opens a window carries `rules: Option<ReconcileRules>`
-  (`serde(default)`, not written when `None`): what to send (`corrected_request` for a
-  held or rejected purchase, `credit_claim` for a credit), the kind (15), the exact
-  `due_units` the outputs must add up to after every fee, the reconciliation fee, the
-  read and write costs the PSP prepays, the deadline, the number of attempts and
-  `FORFEIT_NOTICE`. They are fixed when the window opens, so a payment that is already
-  open keeps the fees it opened with, and `due_units` is a whole number of PSP units
-  with no dollar or bitcoin price in it. They are a fallback for a fallback: a wallet
-  that reconciles automatically and checks its request against them should never fail;
-  they are spelled out for a developer or user with nonstandard tooling, as one last
-  chance to get it right before the funds are lost. `Outcome::rules()` reads them.
+  sent: kind `KIND_PSP_DELIVERY` (13), `request_id` = the record id, `R` = the
+  claim DID, no body. The PSP signs it with its DID key (`build_reply`) and seals the
+  whole reply to the claim DID. Both sides can compute the question's hash, so
+  `verify_answer` binds a record to its record id and claim DID with no new signature
+  code, and the same envelope rules apply as for the other replies. The kind is a
+  hash domain and is never served: a request of kind 13 in a mailbox is not answered.
+- **Which record.** A claim key may pay more than once (a wallet that reuses one),
+  so a claim DID has up to many owed records, counted from 0 in the order the PSP
+  writes them. The `n`th is at the cell whose secret is `sha256("sp-psp-owed-v0" ||
+  PSP DID || claim DID || u32 n)` (`owed_secret`, `owed_address`); the claim names it
+  by `record_id` = `sha256("sp-psp-owed-id-v0" || claim DID || u32 n)` (the PSP's
+  DID is in the address, not in the id: the record is signed by the PSP).
+  The id and the address use two labels, so a claim never carries the secret of the
+  cell. The wallet reads cell 0, then 1, and so on, until a cell is empty; each
+  record carries the `txid` it is for. The claim DID is a one-off key made for the
+  purchase and known only to the wallet and (inside the sealed payload) the PSP, so
+  a third party cannot compute an address and fill the write-once cell first, and
+  the PSP cannot link two purchases of one wallet that use different keys. (There is
+  no purchase id any more: the payload is the claim DID alone, so there is nothing
+  else to hash. A wire version 3 purchase id, `sha256("sp-psp-purchase-v0" ||
+  payload)`, is gone with the payload that fed it.)
+- **The body.** `STATUS_ANSWERED` carries `Owed { txid, paid_sats, value_units,
+  terms }`: the transaction, what the payment was worth in sats, the whole PSP units
+  it buys at the locked price before the prepaid costs, and the `ClaimTerms`. The
+  record does not carry the PSP's keysets: the record is sealed once and may be
+  stored days later, so any set it named could be out of date by the time the
+  wallet reads it, and a claim must name the current set. The wallet fetches the
+  current keyset (kind 4) just before it claims; the claim's reply carries the
+  live keysets so the wallet can unblind from it alone. `Outcome` has
+  one variant, `Owed`; a record has no refusal or held body, because a payment the
+  PSP cannot owe anything for gets no record at all. `STATUS_UNAVAILABLE` and
+  `STATUS_REFUSED` are not used and `open_record` refuses them.
+- **The terms.** `ClaimTerms`: what to send (`purchase_claim`), the kind (15), the
+  exact `due_units` the claim's outputs must add up to (the units the payment buys at
+  the locked price, less the prepaid costs, floored at 0), the read costs (two reads)
+  and the write (one) the PSP prepays and takes from the units owed, `window_secs`,
+  the number of attempts and `EXPIRY_NOTICE`. They are fixed when the record is
+  made, so a payment that is already owed keeps the terms it was written with, and
+  `due_units` is a whole number of PSP units with no dollar or bitcoin price in it.
+  `window_secs` is `psp::CLAIM_WINDOW_SECS`, 30 days, a constant of the wire and not
+  a setting, **counted from when the record is stored on AIR**, not from the
+  payment and not from when the record was built. The record is sealed once and its
+  write is retried with the identical bytes, possibly much later (AIR down, or an
+  earlier record of the same claim key still waiting, since records of one claim DID
+  are delivered in index order), so a record that stated an end time could state
+  one that has already passed, or one earlier than the write that finally lands.
+  The record states the length instead, and the PSP's deadline is the time of the
+  write that lands plus the length. A wallet cannot see when the write happened,
+  only when it first read the record, which is never earlier; so its rule is: claim
+  as soon as the record is read, and keep the claim key at least until the first
+  read plus `window_secs`. They are a fallback for a fallback:
+  a wallet that claims automatically and checks its claim against them should never
+  fail; they are spelled out for a developer or user with nonstandard tooling, as one
+  last chance to get it right before the funds are lost.
 - **No freshness check.** `open_record` calls `verify_answer` with `now` 0 and a
   maximum skew of `u64::MAX`, because the wallet may read the record days after it
   was written. The signature over the question's hash is what binds it.
@@ -306,11 +320,43 @@ likes), so it needs no mailbox and no request.
   through), different is `Different` (a record is there that is not ours; the
   caller must not overwrite it, and cannot). The PSP seals once and keeps the bytes,
   so every retry writes the same bytes.
-- **Goldens.** The purchase id of `b"payload"`, the address for a fixed PSP, reply
-  DID and purchase, and the question's hash are pinned in the unit tests, computed
+- **Goldens.** The record id and the cell secret of indexes 0 and 1 for a fixed PSP
+  and claim DID, and the question's hash, are pinned in the unit tests, computed
   independently with Python's `hashlib`. `tests/air_delivery.rs` runs the transport
   against a local `air_server` (a record written once and read twice, a held read, a
-  read that times out, several records read together under one wait).
+  read that times out, the records of one claim key read until an empty cell).
+
+## The purchase claim (wire version 4)
+
+PSP's OP_RETURN used to carry the notes: the payer chose the outputs and the PSP
+priced and assessed them against what was paid, with tolerances, credits and a
+window to correct a miss. Wire version 4 removes all of that. The payment carries
+only a throwaway **claim key** (`payload`: the 33-byte claim DID, nothing else, no
+header) sealed to the PSP mint's DID, 113 bytes on the chain. The PSP locks the price
+at one confirmation, which fixes what the payment buys (whole PSP units, rounding
+down; the sub-unit remainder, under 10 cents, is kept) and the confirmation tier it
+must reach, writes an owed record to the claim key at that tier, and the wallet
+claims exactly that many units once over kind 15, signed by the claim key. The
+payload has no length or version byte: the wire version says what it is, and it
+is not the kind of payload that grows, since anything else the payer could say
+(outputs, keyset) is now said in the claim.
+
+What changed on the wire, all in this bump: the payload (33 bytes, not 35 plus 41 an
+output and an optional keyset: a version 3 payload does not decode); kind 15's body
+and its digest and hash tags (`psp-mint/claim/v1`, `psp-mint/claim-request/v1`); kind
+13's addresses, ids and body (the owed record); `ClaimTerms` and `Owed` in place of
+`ReconcileRules`, `Signed`, `Refused` and `Held`; the codes. The claim's digest also
+covers the PSP's DID (`digest(psp)`, `hash(psp)`). Every old encoding is a
+clean break, so a version 3 mint and a version 4 wallet refuse each other by the
+mint-info check. The goldens that moved: `payload` (it replaces `payload_with_keyset`
+and `payload_no_keyset`), `ClaimRequest` and its digest and hash, `ClaimResponse`,
+`CLAIM_WINDOW_SECS`, and the sizes test of the sealed payload (113 bytes). `ClaimRequest_digest` and
+`ClaimRequest_hash` moved a second time when the digest took the PSP's DID; the
+Python that recomputes them reproduced the previous values from the same inputs
+first. The
+`seal_*` goldens did not move: the seal is the same, and the fixture's plaintext is
+opaque bytes to it. The Python that recomputed the claim digest and hash first
+reproduced the old reconcile ones from the same inputs.
 
 ## The seal and AIR
 

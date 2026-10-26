@@ -20,6 +20,7 @@ use sp_wire::esp::redeem::{
 use sp_wire::esp::rollover::RolloverRequest as EspRolloverRequest;
 use sp_wire::esp::transfer::{self, TransferRequest};
 use sp_wire::fsp::{FspInput, HandedEsp, IssueGroup, IssueRequest, SpendRequest};
+use sp_wire::psp::ClaimRequest;
 use sp_wire::psp::RolloverRequest as PspRolloverRequest;
 
 const KEYSET_A: &str = "0102030405060708";
@@ -991,4 +992,68 @@ fn a_redeem_body_that_is_not_exactly_one_request_is_refused_with_its_reason() {
 
     // And the unchanged body reads.
     assert!(redeem::decode(&bytes).is_ok());
+}
+
+// ---- the PSP purchase claim -------------------------------------------------
+
+fn claim_request() -> ClaimRequest {
+    ClaimRequest {
+        claim_did: did(90),
+        record_id: [0x55; 32],
+        keyset: KEYSET_A.into(),
+        outputs: vec![output(4, 130), output(2, 131)],
+        signature: sig(0x99),
+    }
+}
+
+#[test]
+fn the_claim_digest_covers_the_psp_and_every_field_and_the_hash_the_signature() {
+    let psp = did(91);
+    let digest = |r: &ClaimRequest| r.digest(&psp);
+    let hash = |r: &ClaimRequest| r.hash(&psp);
+    let base = digest(&claim_request());
+    let base_hash = hash(&claim_request());
+    assert_eq!(base, digest(&claim_request()), "the same request");
+
+    // The PSP the claim is for: a claim signed for one PSP is no claim at another.
+    assert_ne!(base, claim_request().digest(&did(92)), "another PSP");
+    assert_ne!(base_hash, claim_request().hash(&did(92)), "another PSP");
+
+    changes!(claim_request(), digest, base, "the claim DID", |r| {
+        r.claim_did = did(93);
+    });
+    changes!(claim_request(), digest, base, "the record id", |r| {
+        r.record_id[31] ^= 1;
+    });
+    changes!(claim_request(), digest, base, "the keyset", |r| {
+        r.keyset = KEYSET_B.into();
+    });
+    changes!(claim_request(), digest, base, "an output's amount", |r| {
+        r.outputs[1].amount = Amount::from_units(3);
+    });
+    changes!(
+        claim_request(),
+        digest,
+        base,
+        "an output's blind nonce",
+        |r| {
+            r.outputs[0].blind_nonce = BlindNonce(key(200));
+        }
+    );
+    changes!(claim_request(), digest, base, "an output is dropped", |r| {
+        r.outputs.pop();
+    });
+    changes!(claim_request(), digest, base, "the outputs swap", |r| {
+        r.outputs.swap(0, 1);
+    });
+    // The signature is not in the digest (it signs it), and is in the hash.
+    ignores!(claim_request(), digest, base, "the signature", |r| {
+        r.signature = sig(0x98);
+    });
+    changes!(claim_request(), hash, base_hash, "the signature", |r| {
+        r.signature = sig(0x98);
+    });
+    changes!(claim_request(), hash, base_hash, "an output", |r| {
+        r.outputs[0].amount = Amount::from_units(5);
+    });
 }

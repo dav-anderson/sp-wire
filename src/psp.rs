@@ -195,64 +195,84 @@ pub struct PspSpendResponse {
 }
 
 /// One signed output: the blind nonce the wallet asked for and the PSP's blind
-/// signature of it (the pairs `describe` logs). Used by the delivery record
-/// ([`crate::air_request::delivery::Signed`]) and by [`ReconcileResponse`].
+/// signature of it (the pairs `describe` logs). Used by [`ClaimResponse`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedOutput {
     pub blind_nonce: String,
     pub signature: String,
 }
 
-const RECONCILE_DIGEST_TAG: &[u8] = b"psp-mint/reconcile/v1";
-const RECONCILE_HASH_TAG: &[u8] = b"psp-mint/reconcile-request/v1";
+/// How long a purchase stays claimable once its owed record is stored on AIR:
+/// 30 days, in seconds. The window is counted from that moment (the PSP's write
+/// of the record), not from the payment: the owed record states this length as
+/// `window_secs`, and the PSP's deadline is the time of the write plus this. No
+/// claim is accepted at or after the deadline (a claim accepted before it is
+/// finished after it). After it the PSP keeps the payment.
+///
+/// A wallet cannot see when the write happened, only when it first read the
+/// record, which is never earlier. So the rule for a wallet is: claim as soon as
+/// the record is read, and keep the claim key at least until the first read plus
+/// `window_secs`.
+///
+/// It is a constant of the wire and not a setting: the owed record states its
+/// own `window_secs`, and a wallet and a PSP that disagreed about the length of
+/// the window could only lose money to the disagreement.
+pub const CLAIM_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
 
-/// The corrected request or the credit claim of one purchase (AIR kind 15,
-/// `crate::air_request::KIND_PSP_RECONCILE`): the new blinded notes for a
-/// payment that is open (held, rejected, or issued with a credit). One kind
-/// covers both; the mint tells them apart by its record of the payment.
+const CLAIM_DIGEST_TAG: &[u8] = b"psp-mint/claim/v1";
+const CLAIM_HASH_TAG: &[u8] = b"psp-mint/claim-request/v1";
+
+/// The purchase claim (AIR kind 15, `crate::air_request::KIND_PSP_CLAIM`): the
+/// blinded notes for the units a payment is owed, sent once.
 ///
-/// The request must follow the `rules` of the purchase's first delivery
-/// ([`crate::air_request::delivery::ReconcileRules`]): the outputs must add up
-/// to `due_units` exactly. The mint answers only a request it accepts; a
-/// refused one gets no reply.
+/// The PSP wrote an owed record for the payment at the claim DID of the
+/// payload ([`crate::air_request::delivery::Owed`]). The claim names that
+/// record by `record_id` and carries outputs that add up to the record's
+/// `due_units` exactly: the PSP signs the claim whole or not at all. The mint
+/// answers only a claim it accepts; a refused one gets no reply.
 ///
-/// **Who may ask.** AIR clients are anonymous (each connects with a one-off
+/// **Who may claim.** AIR clients are anonymous (each connects with a one-off
 /// connection key), so the envelope names no sender. The proof of the right to
-/// claim is `signature`, a BIP340 signature by the purchase's one-off reply
-/// key over [`ReconcileRequest::digest`]: only the holder of the private half
-/// may claim the payment, and a public key, even one that only the payer and
-/// the PSP know, is never a secret. This matches the ESP's `service_signature`.
-/// The envelope's `R` is not checked.
+/// claim is `signature`, a BIP340 signature by the claim key over
+/// [`ClaimRequest::digest`] (which covers the PSP's DID too): only the holder of the private half may claim the
+/// payment, and a public key, even one that only the payer and the PSP know, is
+/// never a secret. This matches the ESP's `service_signature`. The envelope's
+/// `R` is not checked.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReconcileRequest {
-    /// The purchase's one-off reply key (33 bytes, 66 hex characters): the
-    /// `reply_did` of the payload, `Record.payer_did` at the mint.
-    pub reply_did: crate::ServiceDid,
-    /// The purchase id (32 bytes, 64 hex characters): `purchase_id` of the
-    /// unsealed payload, the `purchase` of the first delivery.
+pub struct ClaimRequest {
+    /// The purchase's throwaway claim key (33 bytes, 66 hex characters): the
+    /// payload of the payment.
+    pub claim_did: crate::ServiceDid,
+    /// The owed record's id (32 bytes, 64 hex characters): `record_id` of
+    /// `crate::air_request::delivery`.
     #[serde(with = "hex32")]
-    pub purchase: [u8; 32],
-    /// The keyset that signs the outputs: the current or the previous one, as in
-    /// a rollover (a set that is not live is refused).
+    pub record_id: [u8; 32],
+    /// The keyset that signs the outputs: the PSP's current one (kind 4 gives
+    /// it). A previous or retired set is refused, and so is an unknown one;
+    /// none of the three uses up an attempt.
     pub keyset: String,
     /// The new blinded notes.
     pub outputs: Vec<MintOutput>,
-    /// BIP340 by `reply_did` over [`ReconcileRequest::digest`] (64 bytes, 128
-    /// hex characters).
+    /// BIP340 by `claim_did` over [`ClaimRequest::digest`] (64 bytes, 128 hex
+    /// characters).
     #[serde(with = "hex_signature")]
     pub signature: secp256k1::schnorr::Signature,
 }
 
-impl ReconcileRequest {
-    /// What the signature covers: `sha256("psp-mint/reconcile/v1" || reply_did
-    /// (33) || purchase (32) || u32 len(keyset) || keyset || u32 count || each
-    /// output: amount u64 || blind nonce (33))`, all integers big-endian.
-    pub fn digest(&self) -> [u8; 32] {
+impl ClaimRequest {
+    /// What the signature covers: `sha256("psp-mint/claim/v1" || psp (33) ||
+    /// claim_did (33) || record_id (32) || u32 len(keyset) || keyset || u32
+    /// count || each output: amount u64 || blind nonce (33))`, all integers
+    /// big-endian. `psp` is the DID of the PSP mint the claim is for (the one
+    /// the payment was sealed to), so a signature made for one PSP is worth
+    /// nothing at another.
+    pub fn digest(&self, psp: &crate::ServiceDid) -> [u8; 32] {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(RECONCILE_DIGEST_TAG);
-        h.update(self.reply_did.as_bytes());
-        h.update(self.purchase);
+        h.update(CLAIM_DIGEST_TAG);
+        h.update(psp.as_bytes());
+        h.update(self.claim_did.as_bytes());
+        h.update(self.record_id);
         h.update(
             u32::try_from(self.keyset.len())
                 .unwrap_or(u32::MAX)
@@ -272,42 +292,38 @@ impl ReconcileRequest {
     }
 
     /// The key stored answers and counted refusals are kept under: the whole
-    /// body, signature included, `sha256("psp-mint/reconcile-request/v1" ||
-    /// digest || signature (64))`. A resend of the same request has the same
-    /// hash.
-    pub fn hash(&self) -> String {
+    /// body, signature included, `sha256("psp-mint/claim-request/v1" || digest
+    /// || signature (64))`, with the digest taken for `psp`. A resend of the same
+    /// claim has the same hash.
+    pub fn hash(&self, psp: &crate::ServiceDid) -> String {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(RECONCILE_HASH_TAG);
-        h.update(self.digest());
+        h.update(CLAIM_HASH_TAG);
+        h.update(self.digest(psp));
         h.update(self.signature.as_ref());
         hex::encode(h.finalize())
     }
 }
 
-/// The answer to an accepted [`ReconcileRequest`]: the mint's signed reply, the
-/// follow-up record, written once to the request's reply cell and sealed to the
-/// request's `R` (the purchase's reply key). A refused request gets no answer.
+/// The answer to an accepted [`ClaimRequest`]: the mint's signed reply, written
+/// once to the claim's reply cell and sealed to the claim's `R` (the claim key).
+/// A refused claim gets no answer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReconcileResponse {
+pub struct ClaimResponse {
     /// The keyset that signed.
     pub keyset: String,
-    /// One pair per output, in the order of the request.
+    /// One pair per output, in the order of the claim.
     pub signatures: Vec<SignedOutput>,
     /// The live keysets, so the wallet can unblind from this reply alone.
     pub keysets: KeysetsResponse,
-    /// The total signed, in PSP units.
+    /// The total signed, in PSP units: the owed record's `due_units`.
     pub issued_units: u64,
-    /// The reconciliation fee taken.
-    pub fee_units: u64,
-    /// The read cost prepaid for this reply.
+    /// The read costs the PSP prepaid and took from the units owed (two reads),
+    /// as the owed record showed them.
     pub read_prepaid_units: u64,
-    /// The one write prepaid for this payment.
+    /// The write the PSP prepaid and took from the units owed (one write), as
+    /// the owed record showed it.
     pub write_prepaid_units: u64,
-    /// The credit rounding remainder the PSP keeps (0 to 9 cents).
-    pub kept_cents: u64,
-    /// The cents the PSP gives away by rounding a credit up (0 to 9).
-    pub given_cents: u64,
 }
 
 mod hex32 {

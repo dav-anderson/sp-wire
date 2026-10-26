@@ -65,7 +65,7 @@ pub const KIND_FSP_ISSUE: u8 = 11;
 /// The request kind of an FSP spend (`POST /spend`, the FSP's): the body is the
 /// request JSON the HTTP call posted.
 pub const KIND_FSP_SPEND: u8 = 12;
-/// The hash domain of a PSP delivery record (REQUEST-DESIGN.md section 18). Never
+/// The hash domain of a PSP owed record (REQUEST-DESIGN.md section 18). Never
 /// sent and never served: the record answers a question that is computed, not
 /// asked (see [`super::delivery`]).
 pub const KIND_PSP_DELIVERY: u8 = 13;
@@ -73,12 +73,12 @@ pub const KIND_PSP_DELIVERY: u8 = 13;
 /// is the [`crate::psp::PspSpendRequest`] JSON. The PSP mint burns the `pay` and
 /// signs the change.
 pub const KIND_PSP_SPEND: u8 = 14;
-/// The request kind of a PSP reconciliation: the corrected request or the credit
-/// claim for an open payment (held, rejected, or issued with a credit). The body
-/// is the [`crate::psp::ReconcileRequest`] JSON, signed by the purchase's reply
-/// key. The PSP mint answers only a request it accepts (`Served::Ignored` for
-/// every other outcome), so a refused request gets no reply.
-pub const KIND_PSP_RECONCILE: u8 = 15;
+/// The request kind of a PSP purchase claim: the notes for the units a payment
+/// is owed, claimed once. The body is the [`crate::psp::ClaimRequest`] JSON,
+/// signed by the purchase's claim key. The PSP mint answers only a claim it
+/// accepts (`Served::Ignored` for every other outcome), so a refused claim gets
+/// no reply.
+pub const KIND_PSP_CLAIM: u8 = 15;
 /// The reply status of a request that was answered. The body is what the HTTP
 /// call would have returned.
 pub const STATUS_ANSWERED: u8 = 0;
@@ -466,7 +466,7 @@ pub enum Served {
     Refused(Vec<u8>),
     /// Not answered at all: nothing is written to the reply cell, and the reason
     /// is only for the mint's log. For a call whose refusals must not be told to
-    /// the asker (the PSP's reconciliation, kind 15: "no refusal replies"), and
+    /// the asker (the PSP's purchase claim, kind 15: "no refusal replies"), and
     /// for a failure the asker should meet by sending the identical request again.
     Ignored(String),
 }
@@ -684,20 +684,20 @@ mod tests {
     }
 
     #[test]
-    fn golden_request_hash_for_the_psp_reconcile_kind() {
+    fn golden_request_hash_for_the_psp_claim_kind() {
         // Computed independently with hashlib: sha256("sp-air-req-v0" || kind ||
         // request_id || R || body_len (4, BE) || body).
         let (id, r) = (test_request().request_id, test_request().reply_key);
         assert_eq!(
-            hex::encode(WireRequest::new(KIND_PSP_RECONCILE, id, r).hash()),
+            hex::encode(WireRequest::new(KIND_PSP_CLAIM, id, r).hash()),
             "ed20e84dcdf46285c80979ceb720f2ee0489dd5049cae8916f9726021e2bdb78"
         );
-        let reconcile = WireRequest {
+        let claim = WireRequest {
             body: br#"{"outputs":[]}"#.to_vec(),
-            ..WireRequest::new(KIND_PSP_RECONCILE, id, r)
+            ..WireRequest::new(KIND_PSP_CLAIM, id, r)
         };
         assert_eq!(
-            hex::encode(reconcile.hash()),
+            hex::encode(claim.hash()),
             "2401d31cef4f63ace223affd9d63edb19deabc02506b876da1c3db7cc76585ea"
         );
     }
@@ -1110,7 +1110,7 @@ mod tests {
         KIND_FSP_SPEND,
         KIND_PSP_DELIVERY,
         KIND_PSP_SPEND,
-        KIND_PSP_RECONCILE,
+        KIND_PSP_CLAIM,
     ];
 
     #[test]
@@ -1297,10 +1297,10 @@ mod tests {
         let mint = SecretKey::new();
         let r = SecretKey::new();
         let serve = |kind: u8, _: &[u8]| match kind {
-            KIND_PSP_RECONCILE => Some(Served::Ignored("wrong_total".to_string())),
+            KIND_PSP_CLAIM => Some(Served::Ignored("wrong_total".to_string())),
             _ => None,
         };
-        let (_, sealed) = asked_with(KIND_PSP_RECONCILE, b"{}", &mint, &r);
+        let (_, sealed) = asked_with(KIND_PSP_CLAIM, b"{}", &mint, &r);
         // No answer is built, so there is no reply cell and no sealed reply to
         // write; the reason is in the error, for the mint's log.
         match answer_request(&mint, &sealed, now_secs(), &serve) {

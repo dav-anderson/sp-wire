@@ -1,307 +1,156 @@
+//! The OP_RETURN payload of a PSP purchase: the **claim DID**, 33 bytes, and
+//! nothing else.
+//!
+//! A purchase carries no notes. The payer pays bitcoin to the PSP's address with
+//! one data output that holds this payload sealed to the PSP mint's DID
+//! (`crate::seal`, 80 bytes of overhead, so 113 bytes on the chain). The claim
+//! DID is a throwaway key the wallet made for this purchase: it is where the PSP
+//! writes what it owes (`air_request::delivery`), and the wallet proves it holds
+//! the private half by signing its one claim with it
+//! (`psp::ClaimRequest`).
+//!
+//! There is no header, no version byte and no length byte: the wire version
+//! ([`crate::WIRE_VERSION`], 4) already says what a payload is, and the length is
+//! fixed. A payload of any other length does not decode. This is a clean break
+//! from wire version 3, whose payload (a length byte, the reply DID, the notes
+//! and a keyset) is longer than 33 bytes and so never decodes as a version 4
+//! payload.
+//!
+//! The 33 bytes must be a valid compressed curve point, because the PSP seals
+//! its record to the key; a payment whose payload is not one is a payment with
+//! no payload the PSP can use.
+
 use std::fmt;
 
-use mint_types::{Amount, BlindNonce, MintOutput};
-use secp256k1::PublicKey;
+use crate::service::{DidError, ServiceDid};
 
-/// Length of the reply field: the payer's AIR DID, a 33-byte value. The
-/// mint treats it as opaque bytes and does not check that it is a curve point.
+/// Length of the claim DID, and so of the whole payload: 33 bytes.
 pub const DID_LEN: usize = 33;
-const POINT_LEN: usize = 33;
-/// A keyset ID on the wire: 8 bytes.
-pub use crate::keyset::KEYSET_LEN;
 
+/// A decoded payload.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Payload {
-    pub did: [u8; DID_LEN],
-    pub outputs: Vec<MintOutput>,
-    /// The keyset the outputs were blinded for (`GET /keysets`), as 16 hex
-    /// characters; 8 bytes after the outputs on the wire. Optional, so older
-    /// payloads still decode. The mint signs with this keyset while it is live,
-    /// and otherwise with its current keyset; it prints the ID of the keyset
-    /// that signed with the signatures.
-    pub keyset: Option<String>,
+    pub claim_did: ServiceDid,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum DecodeError {
-    Truncated,
-    TrailingBytes,
-    WrongReplyLength,
-    NoOutputs,
-    ZeroAmount,
-    InvalidBlindNonce,
+    /// The payload is not exactly [`DID_LEN`] bytes.
+    WrongLength,
+    /// The 33 bytes are not a valid compressed curve point.
+    NotAKey,
 }
 
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DecodeError::Truncated => write!(f, "payload ends early"),
-            DecodeError::TrailingBytes => write!(f, "payload has bytes after the last output"),
-            DecodeError::WrongReplyLength => {
-                write!(f, "reply is not exactly {DID_LEN} bytes (the payer DID)")
+            DecodeError::WrongLength => {
+                write!(f, "payload is not exactly {DID_LEN} bytes (the claim DID)")
             }
-            DecodeError::NoOutputs => write!(f, "payload has no outputs"),
-            DecodeError::ZeroAmount => write!(f, "an output has amount zero"),
-            DecodeError::InvalidBlindNonce => write!(f, "a blind nonce is not a valid curve point"),
+            DecodeError::NotAKey => write!(f, "the claim DID is not a valid curve point"),
         }
     }
 }
 
 impl std::error::Error for DecodeError {}
 
-fn take<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8], DecodeError> {
-    if input.len() < len {
-        return Err(DecodeError::Truncated);
-    }
-    let (head, tail) = input.split_at(len);
-    *input = tail;
-    Ok(head)
-}
-
+/// Read a payload (the plaintext, after decryption).
 pub fn decode(bytes: &[u8]) -> Result<Payload, DecodeError> {
-    let mut rest = bytes;
-
-    let reply_len = usize::from(take(&mut rest, 1)?[0]);
-    if reply_len != DID_LEN {
-        return Err(DecodeError::WrongReplyLength);
+    if bytes.len() != DID_LEN {
+        return Err(DecodeError::WrongLength);
     }
-    let did: [u8; DID_LEN] = take(&mut rest, DID_LEN)?
-        .try_into()
-        .expect("length checked");
-
-    let count = take(&mut rest, 1)?[0];
-    if count == 0 {
-        return Err(DecodeError::NoOutputs);
+    match ServiceDid::from_slice(bytes) {
+        Ok(claim_did) => Ok(Payload { claim_did }),
+        Err(DidError::NotAKey(_)) => Err(DecodeError::NotAKey),
+        Err(_) => Err(DecodeError::WrongLength),
     }
-
-    let mut outputs = Vec::with_capacity(usize::from(count));
-    for _ in 0..count {
-        let amount_bytes: [u8; 8] = take(&mut rest, 8)?.try_into().expect("length checked");
-        let units = u64::from_be_bytes(amount_bytes);
-        if units == 0 {
-            return Err(DecodeError::ZeroAmount);
-        }
-        let point = PublicKey::from_slice(take(&mut rest, POINT_LEN)?)
-            .map_err(|_| DecodeError::InvalidBlindNonce)?;
-        outputs.push(MintOutput {
-            amount: Amount::from_units(units),
-            blind_nonce: BlindNonce(point),
-        });
-    }
-
-    let keyset = match rest.len() {
-        0 => None,
-        KEYSET_LEN => Some(hex::encode(rest)),
-        _ => return Err(DecodeError::TrailingBytes),
-    };
-    Ok(Payload {
-        did,
-        outputs,
-        keyset,
-    })
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum EncodeError {
-    NoOutputs,
-    /// The output count is one byte.
-    TooManyOutputs,
-    ZeroAmount,
-    /// The keyset is not 16 hex characters.
-    BadKeyset,
+    /// The claim DID is not exactly [`DID_LEN`] bytes.
+    WrongLength,
+    /// The 33 bytes are not a valid compressed curve point.
+    NotAKey,
 }
 
 impl fmt::Display for EncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EncodeError::NoOutputs => write!(f, "payload has no outputs"),
-            EncodeError::TooManyOutputs => write!(f, "payload has more than 255 outputs"),
-            EncodeError::ZeroAmount => write!(f, "an output has amount zero"),
-            EncodeError::BadKeyset => write!(f, "the keyset is not 16 hex characters"),
+            EncodeError::WrongLength => {
+                write!(f, "the claim DID is not exactly {DID_LEN} bytes")
+            }
+            EncodeError::NotAKey => write!(f, "the claim DID is not a valid curve point"),
         }
     }
 }
 
 impl std::error::Error for EncodeError {}
 
-/// Write a payload in the wire format (the plaintext, before encryption). The
-/// wallet uses this, and `decode` reads it back.
-pub fn encode(payload: &Payload) -> Result<Vec<u8>, EncodeError> {
-    if payload.outputs.is_empty() {
-        return Err(EncodeError::NoOutputs);
+/// Write a payload (the plaintext, before encryption): the claim DID itself.
+/// The wallet uses this, and [`decode`] reads it back.
+pub fn encode(claim_did: &[u8]) -> Result<Vec<u8>, EncodeError> {
+    if claim_did.len() != DID_LEN {
+        return Err(EncodeError::WrongLength);
     }
-    let count = u8::try_from(payload.outputs.len()).map_err(|_| EncodeError::TooManyOutputs)?;
-    let mut out = Vec::with_capacity(2 + DID_LEN + payload.outputs.len() * (8 + POINT_LEN));
-    out.push(DID_LEN as u8);
-    out.extend_from_slice(&payload.did);
-    out.push(count);
-    for output in &payload.outputs {
-        if output.amount.units == 0 {
-            return Err(EncodeError::ZeroAmount);
-        }
-        out.extend_from_slice(&output.amount.units.to_be_bytes());
-        out.extend_from_slice(&output.blind_nonce.0.serialize());
+    match ServiceDid::from_slice(claim_did) {
+        Ok(did) => Ok(did.as_bytes().to_vec()),
+        Err(_) => Err(EncodeError::NotAKey),
     }
-    if let Some(k) = &payload.keyset {
-        match hex::decode(k) {
-            Ok(b) if b.len() == KEYSET_LEN => out.extend_from_slice(&b),
-            _ => return Err(EncodeError::BadKeyset),
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const KAT_PLAINTEXT_HEX: &str = "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179802000000000000000402f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f90000000000000001022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4";
-    const POINT_3G: &str = "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
-    const POINT_5G: &str = "022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4";
+    /// The generator point G: a valid claim DID.
+    const GENERATOR: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-    fn point(hex_str: &str) -> PublicKey {
-        PublicKey::from_slice(&hex::decode(hex_str).expect("valid hex")).expect("valid point")
-    }
-
-    fn output(units: u64, hex_point: &str) -> MintOutput {
-        MintOutput {
-            amount: Amount::from_units(units),
-            blind_nonce: BlindNonce(point(hex_point)),
-        }
-    }
-
-    const DID_HEX: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-
-    fn did(byte: u8) -> [u8; DID_LEN] {
-        [byte; DID_LEN]
+    fn generator() -> Vec<u8> {
+        hex::decode(GENERATOR).expect("valid hex")
     }
 
     #[test]
-    fn a_keyset_after_the_outputs_round_trips_and_other_trailing_bytes_do_not() {
-        let mut p = sample();
-        p.keyset = Some("0123456789abcdef".into());
-        let bytes = super::encode(&p).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), p);
-        assert_eq!(
-            decode(&bytes[..bytes.len() - 1]),
-            Err(DecodeError::TrailingBytes)
-        );
-        p.keyset = Some("zz".into());
-        assert_eq!(super::encode(&p), Err(EncodeError::BadKeyset));
+    fn the_payload_is_the_claim_did_and_nothing_else() {
+        let bytes = encode(&generator()).unwrap();
+        assert_eq!(hex::encode(&bytes), GENERATOR);
+        assert_eq!(bytes.len(), DID_LEN);
+        let payload = decode(&bytes).unwrap();
+        assert_eq!(payload.claim_did.to_hex(), GENERATOR);
     }
 
-    fn sample() -> Payload {
-        Payload {
-            keyset: None,
-            did: hex::decode(DID_HEX).unwrap().try_into().unwrap(),
-            outputs: vec![output(4, POINT_3G), output(1, POINT_5G)],
+    #[test]
+    fn any_other_length_is_refused_both_ways() {
+        for len in [0usize, 1, DID_LEN - 1, DID_LEN + 1, 64, 113] {
+            let mut bytes = generator();
+            bytes.resize(len, 0x11);
+            assert_eq!(decode(&bytes), Err(DecodeError::WrongLength), "{len}");
+            assert_eq!(encode(&bytes), Err(EncodeError::WrongLength), "{len}");
         }
     }
 
     #[test]
-    fn the_public_encode_reproduces_the_known_answer_and_round_trips() {
-        let bytes = super::encode(&sample()).unwrap();
-        assert_eq!(hex::encode(&bytes), KAT_PLAINTEXT_HEX);
-        assert_eq!(decode(&bytes), Ok(sample()));
-        // And the known answer itself, from its hex literal, decodes to the sample.
-        let from_hex = hex::decode(KAT_PLAINTEXT_HEX).expect("valid hex");
-        assert_eq!(decode(&from_hex), Ok(sample()));
-    }
-
-    #[test]
-    fn the_public_encode_refuses_what_decode_would_refuse() {
-        let none = Payload {
-            keyset: None,
-            did: did(7),
-            outputs: vec![],
-        };
-        assert_eq!(super::encode(&none), Err(EncodeError::NoOutputs));
-        let zero = Payload {
-            keyset: None,
-            did: did(7),
-            outputs: vec![output(0, POINT_3G)],
-        };
-        assert_eq!(super::encode(&zero), Err(EncodeError::ZeroAmount));
-        let many = Payload {
-            keyset: None,
-            did: did(7),
-            outputs: (0..256).map(|_| output(1, POINT_3G)).collect(),
-        };
-        assert_eq!(super::encode(&many), Err(EncodeError::TooManyOutputs));
-        let max = Payload {
-            keyset: None,
-            did: did(7),
-            outputs: (0..255).map(|_| output(1, POINT_3G)).collect(),
-        };
-        assert_eq!(super::encode(&max).unwrap().len(), 35 + 41 * 255);
-    }
-
-    #[test]
-    fn the_did_is_carried_through_unchecked() {
-        let payload = Payload {
-            keyset: None,
-            did: did(7),
-            outputs: vec![output(1, POINT_3G)],
-        };
-        assert_eq!(decode(&super::encode(&payload).unwrap()), Ok(payload));
-    }
-
-    #[test]
-    fn any_truncation_is_rejected() {
-        let bytes = super::encode(&sample()).unwrap();
-        for len in 0..bytes.len() {
-            assert!(decode(&bytes[..len]).is_err(), "length {len} was accepted");
+    fn bytes_that_are_not_a_curve_point_are_refused_both_ways() {
+        // The right length and a valid prefix, but x = 5 is not on the curve...
+        let mut off_curve = vec![0x02];
+        off_curve.extend_from_slice(&[0u8; 31]);
+        off_curve.push(5);
+        // ...and a prefix byte that is not 2 or 3.
+        let mut bad_prefix = generator();
+        bad_prefix[0] = 0x07;
+        for bytes in [off_curve, bad_prefix] {
+            assert_eq!(decode(&bytes), Err(DecodeError::NotAKey));
+            assert_eq!(encode(&bytes), Err(EncodeError::NotAKey));
         }
     }
 
     #[test]
-    fn rejects_trailing_bytes() {
-        let mut bytes = super::encode(&sample()).unwrap();
-        bytes.push(0);
-        assert_eq!(decode(&bytes), Err(DecodeError::TrailingBytes));
-    }
-
-    #[test]
-    fn rejects_zero_amount() {
-        // Deliberately malformed: the known answer with its first output's
-        // amount (bytes 35 to 43, after the DID) set to zero. `encode` refuses to
-        // write such a payload, so the bytes are made by hand.
-        let mut bytes = hex::decode(KAT_PLAINTEXT_HEX).expect("valid hex");
-        bytes[35..43].copy_from_slice(&0u64.to_be_bytes());
-        assert_eq!(decode(&bytes), Err(DecodeError::ZeroAmount));
-    }
-
-    #[test]
-    fn rejects_no_outputs() {
-        let mut bytes = vec![DID_LEN as u8];
-        bytes.extend_from_slice(&did(7));
-        bytes.push(0);
-        assert_eq!(decode(&bytes), Err(DecodeError::NoOutputs));
-    }
-
-    #[test]
-    fn rejects_any_reply_length_other_than_a_did() {
-        for len in [0usize, 10, DID_LEN - 1, DID_LEN + 1, 64] {
-            let mut bytes = vec![len as u8];
-            bytes.extend_from_slice(&vec![7u8; len]);
-            bytes.push(1);
-            bytes.extend_from_slice(&1u64.to_be_bytes());
-            bytes.extend_from_slice(&hex::decode(POINT_3G).unwrap());
-            assert_eq!(
-                decode(&bytes),
-                Err(DecodeError::WrongReplyLength),
-                "reply length {len}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_invalid_blind_nonce() {
-        let mut bytes = vec![DID_LEN as u8];
-        bytes.extend_from_slice(&did(7));
-        bytes.push(1);
-        bytes.extend_from_slice(&1u64.to_be_bytes());
-        bytes.extend_from_slice(&[0u8; POINT_LEN]);
-        assert_eq!(decode(&bytes), Err(DecodeError::InvalidBlindNonce));
+    fn a_version_3_payload_does_not_decode() {
+        // Version 3 began with the reply length byte (33) and then the DID, the
+        // output count and the outputs: 35 bytes at the least, never 33.
+        let mut v3 = vec![DID_LEN as u8];
+        v3.extend_from_slice(&generator());
+        v3.push(0);
+        assert_eq!(decode(&v3), Err(DecodeError::WrongLength));
     }
 }

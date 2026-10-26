@@ -12,7 +12,7 @@ use sp_wire::esp::redeem::{
 };
 use sp_wire::fsp;
 use sp_wire::keyset::{KEYSET_HEX_LEN, KEYSET_LEN, is_keyset_id, keyset_id};
-use sp_wire::payload::{self, DID_LEN, Payload};
+use sp_wire::payload::{self, DID_LEN};
 use sp_wire::service::ServiceDid;
 
 fn key(n: u8) -> PublicKey {
@@ -84,22 +84,12 @@ fn the_keyset_id_is_8_bytes_or_16_hex_characters() {
 }
 
 #[test]
-fn a_payload_is_35_bytes_plus_41_for_each_output_and_8_for_a_keyset() {
-    for n in 1..=4usize {
-        let outputs: Vec<MintOutput> = (0..n).map(|i| output(1 << i, 20 + i as u8)).collect();
-        let bare = Payload {
-            did: [7; DID_LEN],
-            outputs: outputs.clone(),
-            keyset: None,
-        };
-        assert_eq!(payload::encode(&bare).unwrap().len(), 35 + 41 * n);
-        let with = Payload {
-            did: [7; DID_LEN],
-            outputs,
-            keyset: Some("0102030405060708".into()),
-        };
-        assert_eq!(payload::encode(&with).unwrap().len(), 35 + 41 * n + 8);
-    }
+fn a_payload_is_the_33_byte_claim_did_and_nothing_else() {
+    assert_eq!(DID_LEN, 33);
+    let claim = key(9).serialize();
+    let bytes = payload::encode(&claim).unwrap();
+    assert_eq!(bytes, claim);
+    assert_eq!(payload::decode(&bytes).unwrap().claim_did, did(9));
 }
 
 #[test]
@@ -166,37 +156,24 @@ fn an_fsp_issue_group_is_16_bytes_plus_106_a_note_and_41_an_output() {
 
 #[cfg(feature = "seal")]
 #[test]
-fn a_sealed_payload_is_80_bytes_longer_than_its_payload_and_hides_the_did() {
+fn a_sealed_payload_is_113_bytes_and_hides_the_claim_did() {
     use sp_wire::seal::{self, OVERHEAD, SENDER_KEY_BYTES, SecretKey, TAG_BYTES};
     assert_eq!(SENDER_KEY_BYTES, 64);
     assert_eq!(TAG_BYTES, 16);
     assert_eq!(OVERHEAD, 80);
-    // What goes in the OP_RETURN for n outputs without a keyset: the 35-byte
-    // payload header and 41 an output, then the seal. A purchase of the largest
-    // allowed 255 outputs is 35 + 41 * 255 + 80 = 10_570 bytes.
-    let sealed = |n: usize| 35 + 41 * n + OVERHEAD;
-    assert_eq!(sealed(1), 156);
-    assert_eq!(sealed(255), 10_570);
-    // With the keyset the payload carries, 8 bytes more.
-    assert_eq!(sealed(1) + 8, 164);
-
-    // A real payload, sealed to a mint key: 156 bytes for one output.
-    let reply_did = key(9).serialize();
-    let plain = payload::encode(&Payload {
-        did: reply_did,
-        outputs: vec![output(4, 20)],
-        keyset: None,
-    })
-    .unwrap();
-    assert_eq!(plain.len(), 35 + 41);
-    // The reply DID is in the plaintext, so finding it absent below means something.
-    assert!(plain.windows(DID_LEN).any(|w| w == reply_did));
+    // What goes in the OP_RETURN: the 33-byte claim DID, then the seal.
+    let claim = key(9).serialize();
+    let plain = payload::encode(&claim).unwrap();
+    assert_eq!(plain.len(), 33);
+    // The claim DID is in the plaintext, so finding it absent below means something.
+    assert!(plain.windows(DID_LEN).any(|w| w == claim));
     let mint = SecretKey::new();
-    let sealed_bytes = seal::encrypt(&mint.public_key(), &plain).unwrap();
-    assert_eq!(sealed_bytes.len(), plain.len() + OVERHEAD);
-    assert_eq!(sealed_bytes.len(), sealed(1));
+    let sealed = seal::encrypt(&mint.public_key(), &plain).unwrap();
+    assert_eq!(sealed.len(), 33 + OVERHEAD);
+    assert_eq!(sealed.len(), 113);
     assert!(
-        !sealed_bytes.windows(DID_LEN).any(|w| w == reply_did),
-        "the reply DID shows in the sealed bytes"
+        !sealed.windows(DID_LEN).any(|w| w == claim),
+        "the claim DID shows in the sealed bytes"
     );
+    assert_eq!(seal::decrypt(&mint, &sealed).unwrap(), plain);
 }
