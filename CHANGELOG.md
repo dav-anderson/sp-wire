@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 (2026-10-27): the key-set ID over every key, and the mints' key streams (WIRE_VERSION 5)
+
+**P2-04, the mint fingerprinting defence.** A mint that signs one user with keys it uses for that user alone could recognise that user's notes when they come back. A clean break from wire version 4: every PSP and FSP key-set ID changes, and the mints now publish their keys on AIR so a wallet can check every key in every reply. A version 4 wallet and a version 5 mint (or the other way round) refuse each other by the mint-info check.
+
+- **Changed (breaking): `WIRE_VERSION` is 5.** History line in `version.rs`; the version tests assert 5 (`the_wire_version_is_five`, `the_same_version_passes`, the mismatch cases name 5).
+- **Changed (breaking): `keyset::keyset_id` hashes every (amount, key) pair.** `SHA-256("psp-mint/keyset-id/v2" || for each (amount, key) in amount order: 8-byte big-endian amount || 33-byte compressed key)[..8]`. It was the 1-unit key only under `psp-mint/keyset-id/v1`, so a mint could give one user a different key for any other amount without the ID changing. The signature is the same; the result is not. There is one function for the PSP, every FSP mint and the wallet (fsp-mint's own `ID_TAG` is removed there). The ESP mint's ID is unchanged.
+- **New: `keyset::KEYSET_ID_TAG`** (`b"psp-mint/keyset-id/v2"`).
+- **New: `air_request::stream`** (feature `air-request`; the transport helpers need `air-client`): the cells (`Cell::{Keyset, Control, Day}`, `DayCell`, `cell_tweak`, `cell_address`, `cell_secret`), the records (`KeysetRecord`, `ControlRecord`, `GenerationRef`, `DayRecord`, `ServiceKeys`, `RecordError`; `encode` and `decode`), the buckets (`bucket_of`, `buckets_for`, `services_per_record`, `BUCKET_SERVICES` 256, `RECORD_MAX_BYTES` 15 MiB) and, with `air-client`, `write_cell`, `read_cell`, `find_end`, `read_keyset`, `read_keyset_tail`, `read_keysets_from`, `publish_keysets` and `Published`, `KeysetTail` and `KeysetPublisher`. Labels `sp-stream-cell-v0` and `sp-esp-bucket-v0`. See README and DESIGN, "The key-set ID and the key streams".
+- **Changed: feature `air-request` turns on `secp256k1/global-context`** (the cell address is the DID key plus a tweak times G). No new dependency.
+- **Goldens.** `tests/golden/psp.txt`: `GOLDEN keyset_id` moves from `47b2a6291028c0d9` to `ea26fb55ffca2773` (keys of the secrets `[10;32]` at amount 1 and `[11;32]` at amount 2; recomputed in Python, which first reproduced the old value under `v1`). New goldens for the cell tweaks, secrets and addresses, the bucket hash, and the three record encodings (pinned bytes). In `keyset.rs`: the key set of 64 keys `full()` is `e3205d54a3c48e66`; changing the key of 2^5 gives `c0f768daf657d87e`, of 2^63 `7a17406d9ad1fdc1` (under `v1` all three had the ID `f00d3c2acd2561fa`); the one-key sets are `912d9b8b1649a1a2` (amount 1) and `9b042b797bbb29da` (amount 2).
+- Tests: 122 before, 144 after (23 added, 1 removed: `the_wire_version_is_four` is replaced by `the_wire_version_is_five`, so the net is 22). The `wire_version` numbers in the mint-info fixtures of `envelope.rs` and `tests/air_ask.rs` (3 and 4) are the numbers a made-up mint reports against a made-up expectation, not this crate's `WIRE_VERSION`, and are unchanged (one is inside a signed golden body).
+- Removed public items: none.
+- Docs: README, DESIGN (a new section), the module docs of `lib`, `keyset`, `payload`, `version` and `air_request`.
+
 ## 0.6.0 (2026-10-25): the PSP purchase claim (WIRE_VERSION 4)
 
 **The payment carries only a claim key; the PSP writes an owed record to it; the wallet claims once.** A clean break from wire version 3: a version 3 payload, kind 13 record or kind 15 body does not decode or verify, and a version 3 mint and a version 4 wallet refuse each other by the mint-info check. Nothing is migrated.

@@ -10,7 +10,7 @@
 //! (`psp::ClaimRequest`).
 //!
 //! There is no header, no version byte and no length byte: the wire version
-//! ([`crate::WIRE_VERSION`], 4) already says what a payload is, and the length is
+//! ([`crate::WIRE_VERSION`], from 4) already says what a payload is, and the length is
 //! fixed. A payload of any other length does not decode. This is a clean break
 //! from wire version 3, whose payload (a length byte, the reply DID, the notes
 //! and a keyset) is longer than 33 bytes and so never decodes as a version 4

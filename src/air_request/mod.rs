@@ -36,6 +36,11 @@
 //!   what it owes the claim key, as one record at an address the wallet can
 //!   compute (REQUEST-DESIGN.md section 18). Pure, with transport helpers
 //!   (`write_record`, `read_record`) under `air-client`.
+//! - [`stream`] (feature `air-request`): the mints' key streams, how a mint
+//!   publishes its public keys as records on AIR and how a wallet finds them
+//!   (the cell addresses, the record encodings, the buckets of the ESP's days).
+//!   Pure, with transport helpers (`write_cell`, `read_cell`, `find_end`) under
+//!   `air-client`.
 //! - `client` (feature `air-client`): the thin transport. Connect to a
 //!   configured AIR server, raw `Create` and `Read`, a held read. No AIR helper
 //!   of `orange_me` is used.
@@ -47,9 +52,10 @@
 //!
 //! # Wire version
 //!
-//! These bytes ride [`crate::WIRE_VERSION`] 4. Version 3 made a service ID a
+//! These bytes ride [`crate::WIRE_VERSION`] 5. Version 3 made a service ID a
 //! 33-byte DID; version 4 made kind 13 the PSP's owed record (its address, id and
-//! body) and kind 15 the purchase claim, so their addresses and hashes are new.
+//! body) and kind 15 the purchase claim, so their addresses and hashes are new;
+//! version 5 added the key streams ([`stream`]) and the key-set ID over every key.
 //! Nothing else here changed. The
 //! envelope has its own version byte ([`envelope::ENVELOPE_VERSION`], 0), and the
 //! `-v0` in each label moves every address and digest if a derivation changes.
@@ -65,6 +71,7 @@
 pub mod addr;
 pub mod delivery;
 pub mod envelope;
+pub mod stream;
 
 #[cfg(feature = "air-client")]
 pub mod ask;

@@ -15,7 +15,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | Module | Holds |
 | --- | --- |
 | `units` | `ESP_PER_PSP` (10^11), `ESP_PER_USD` (10^12), `MAX_PSP_PER_NOTE`, the PSP-to-ESP conversions |
-| `keyset` | the key-set ID (8 bytes, 16 hex characters), the PSP's `keyset_id`, `KeysetWindow`, `RotationResponse` (`GET /rotation`) |
+| `keyset` | the key-set ID (8 bytes, 16 hex characters), the one shared `keyset_id` (it hashes every (amount, key) pair, tag `psp-mint/keyset-id/v2`; the PSP, every FSP mint and the wallet use it), `KeysetWindow`, `RotationResponse` (`GET /rotation`) |
 | `payload` | the PSP OP_RETURN payload, the 33-byte claim DID and nothing else: `Payload`, `encode`, `decode`, `DID_LEN` (33) |
 | `seal` | the sealed payload's format (a constant 80 bytes of overhead: the 64-byte sender key and the 16-byte tag) and, with the `seal` feature, `encrypt`, `decrypt`, `parse_public_key` |
 | `melt` | `MeltRequest` and `MeltResponse`, the bodies of the PSP's `POST /melt` (the ESP mint calls it) |
@@ -26,7 +26,7 @@ does no I/O), and its dependencies are small (`mint-types`, `secp256k1`, `serde`
 | `dec` | a `u128` as a decimal string in JSON |
 | `service` | `ServiceDid`, a service's ID: its 33-byte AIR DID (a compressed key, 66 hex characters), the one type and parser every mint and the wallet use for it |
 | `version` | `WIRE_VERSION` and `check`, the check a wallet makes of the wire version a mint reports |
-| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, its rollover and check-state, and the PSP's owed record (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
+| `air_request` | the requests over AIR, mint info, a PSP's keys, keysets and rotation, its rollover and check-state, the PSP's owed record, and the mints' key streams (`air_request::stream`) (feature `air-request`; the transport is `air-client`): envelopes, mailbox and reply-cell addresses, request hash, reply digest, sign and verify, `MintInfo`; with `air-client` also the thin AIR client, the wallet's whole flow (`ask`) and a local `air_server` for tests. See "The AIR request" below |
 | `storage` | not wire: the storage policy (an ordered list of service DIDs per kind of data, index 0 primary), its parser and its checks, shared by the three mints and the wallet. Config only; it reads and writes nothing |
 
 The note, nonce, blinded output and mint input/output types are mint-core's
@@ -55,7 +55,7 @@ holds the notes**: the SPI's ecash-wallet swaps them for notes of its own with
 
 ## wire_version
 
-`WIRE_VERSION` is a single integer, currently 4. Every mint reports it as
+`WIRE_VERSION` is a single integer, currently 5. Every mint reports it as
 `wire_version` in its mint info (see "The AIR request" below), and a wallet
 refuses a mint whose number is not its own, or that reports none, with an error
 that names both (`version::check`).
@@ -143,7 +143,7 @@ request into a numbered mailbox of the mint's DID (anyone can write a slot, only
 the mint can open it), the mint answers in a reply cell only the wallet and the
 mint can compute (`r.shared(mint) == mint.shared(R)`), and the reply carries the
 mint's BIP340 signature, so an untrusted AIR server can withhold a reply but not
-forge one. It rides `WIRE_VERSION` 4 (kinds 13 and 15 are the owed record and the purchase claim from version 4; the rest is as in version 3).
+forge one. It rides `WIRE_VERSION` 5 (kinds 13 and 15 are the owed record and the purchase claim from version 4; version 5 added the key streams, below, and the key-set ID over every key; the rest is as in version 3).
 
 - **Feature `air-request`** (implies `seal`): the pure parts. Envelopes
   (`envelope`), addresses, sealing and signature bytes (`addr`), `MintInfo`. No
@@ -160,6 +160,31 @@ forge one. It rides `WIRE_VERSION` 4 (kinds 13 and 15 are the owed record and th
   version and network: read the reply cell first, write a request into the first
   free slot, wait, retry with the same `request_id` and `r`, verify), and
   `local_server`, an `air_server` started in the test process.
+- **The key streams (`air_request::stream`, wire version 5).** How a mint
+  publishes the public keys it signs with, so that a wallet can check every key
+  in every reply against what every other user can see (finding P2-04: a mint
+  that signs one user with keys it uses for that user alone could recognise that
+  user's notes when they come back). Every record is one write-once cell of the
+  mint's AIR service, at an address anyone can compute from the mint's DID and
+  the cell's name (`cell_address`: the DID key plus `SHA-256("sp-stream-cell-v0"
+  || DID || path)` times G) and only the mint can write (`cell_secret`). The
+  records are plain (public keys; unsealed, unsigned: signed key sets are ROADMAP
+  item 34) and deterministic, so a write repeated is `Written::AlreadyStored`.
+  There are three: the **key set** (kind 1) of a PSP or FSP mint, the `n`th at
+  `Cell::Keyset { index: n }` (`KeysetRecord`: epoch and every (amount, key); its
+  `id()` is the shared `keyset_id`); the **control record** (kind 2) of an ESP mint
+  (`ControlRecord`: the maturity rule `m` and its live generations, 47 bytes); and
+  the ESP's **day record** (kind 3, `DayRecord`: for one generation and one day,
+  the 64 keys of each service, 2,145 bytes a service). A day is one record while
+  it fits `RECORD_MAX_BYTES` or the size the operator set; past it the services
+  are grouped into buckets of `BUCKET_SERVICES` (256) by `bucket_of`, a hash of the
+  service DID, and a wallet reads its service's bucket. A connection that keeps
+  reading the same few buckets can still be recognised, less precisely. With
+  `air-client`: `write_cell`, `read_cell`, `find_end` (about 2 log2 n reads),
+  `read_keyset_tail`, `read_keysets_from` and `publish_keysets`/`KeysetPublisher`
+  (a restart, a crash between two writes or an unacknowledged write is repaired
+  by the next call). Every address, tweak, size and record is pinned by goldens
+  computed independently in Python.
 - **The owed record (`air_request::delivery`).** The one call that goes the other
   way: the PSP writes, the wallet reads. The payment carries a throwaway claim key
   (`payload`, 33 bytes, sealed to the PSP). At the confirmation tier its locked USD

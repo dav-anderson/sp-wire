@@ -34,7 +34,8 @@ The goldens in `tests/golden/*.txt` were captured from the v0.1.0 mints before
 this crate existed, so that moving the types out of the mints provably changed no
 byte. They are the specification. The only lines that have moved since are the
 sealed-payload ones (wire version 2, below), the ones that carry a service ID
-(wire version 3, below), the payload and kind 15 ones (wire version 4, below) and
+(wire version 3, below), the payload and kind 15 ones (wire version 4, below), the key-set ID one
+(wire version 5, below) and
 the two request hashes that gained the note
 signatures (`SpendRequest_hash` and `transfer_request_hash`, below). Those two
 were recomputed independently with Python's `hashlib`, which first reproduced the
@@ -357,6 +358,59 @@ first. The
 `seal_*` goldens did not move: the seal is the same, and the fixture's plaintext is
 opaque bytes to it. The Python that recomputed the claim digest and hash first
 reproduced the old reconcile ones from the same inputs.
+
+## The key-set ID and the key streams (wire version 5)
+
+**The attack.** A mint that signs one user's outputs with a key it uses for that
+user alone, or with a key of an amount that no ID showed, can recognise that
+user's notes when they come back (finding P2-04). The defence has two halves: every
+user can read the same keys, and a wallet checks every key it is signed with
+against them.
+
+**The ID (`keyset_id`).** It was `SHA-256("psp-mint/keyset-id/v1" || the 1-unit
+key)[..8]`, so a mint could give one user a key for any other amount and the ID
+would not change. It is now `SHA-256("psp-mint/keyset-id/v2" || for each (amount,
+key) in amount order: amount as 8 bytes big-endian || the 33 compressed key
+bytes)[..8]`. The tag is `v2` because a `v1` ID is a different function and is
+accepted nowhere. Each pair is a fixed 41 bytes after a fixed tag, so no two key
+sets share a hash input. There is one function: psp-mint, fsp-mint (which had its
+own `ID_TAG`, now removed) and the wallet all call it. The ESP mint's ID is
+unchanged: it derives from the master secret and names a generation only; its
+per-day keys are checked against the stream instead.
+
+**Why this is wire version 5.** Every PSP and FSP key-set ID changes, and so does
+every request, hash, digest, record and golden that names one; the new stream
+cells and records are new bytes a version 4 mint does not write. A version 4 wallet
+and a version 5 mint refuse each other by the mint-info check. The golden that
+moved is `GOLDEN keyset_id` in `tests/golden/psp.txt` (`47b2a6291028c0d9` to
+`ea26fb55ffca2773`, recomputed in Python from the same inputs after the Python
+first reproduced the old value); the new goldens are the stream's.
+
+**Where the keys go.** The cells are the mint's own, so nobody can fill one first
+and the wallet can know where to look: the address is the DID key moved by a tweak
+`t = SHA-256("sp-stream-cell-v0" || DID || path)`, `P + t*G`, with the secret
+`d + t` that only the mint has. (AIR's `derive_risky` is not used: it hashes a
+pointer-width integer, so the same name would give two addresses on 32- and
+64-bit machines.) The mailbox slots of `addr` are the opposite pair: anyone can
+write them, only the mint can read them. A path is a one-byte kind and the
+fixed-width parts of the name (`[1] || index` for a key set, `[2] || index` for a
+control record, `[3] || generation || day || bucket || part` for a day).
+
+**The records are plain, deterministic and write-once.** AIR has no delete and no
+overwrite, so a record can not be corrected; a mint that writes it twice writes the
+same bytes (no clock, no randomness), and the second write is `AlreadyStored`. A
+cell found holding other bytes is an error that is never written over (another
+process is writing this mint's stream). They are unsealed and unsigned: they are
+public keys, and signing key sets is ROADMAP item 34, not this.
+
+**Buckets.** The ESP's key for an amount is per generation, service and day, so a
+day holds 2,145 bytes for each service. One record holds the day until it would
+pass the operator's size; then `ceil(n / 256)` buckets by a hash of the service's
+DID, parts 0, 1, 2, ... in a bucket (a service that appears after the day was
+written is a new part, so a part never grows). A wallet reads the one bucket its
+service is in. A connection that keeps reading the same few buckets can still be
+recognised, less precisely than one that reads a service's own record. That is the
+residual; it is stated in the mints' docs too.
 
 ## The seal and AIR
 

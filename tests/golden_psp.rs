@@ -85,7 +85,7 @@ fn the_psp_wire_bytes_are_unchanged() {
     json("Note", &note(30));
     line("point_hex", hex::encode(key(1).serialize()));
 
-    // The key-set ID: 8 bytes of SHA-256 over a tag and the 1-unit key.
+    // The key-set ID: 8 bytes of SHA-256 over a tag and every (amount, key) pair.
     let mut pk = BTreeMap::new();
     pk.insert(Amount::from_units(1), key(10));
     pk.insert(Amount::from_units(2), key(11));

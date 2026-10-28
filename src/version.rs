@@ -29,7 +29,13 @@ use std::fmt;
 ///   delivery record of kind 13 is the owed record at an address of the claim
 ///   DID and an index. The kind number does not change; its bodies, addresses
 ///   and request hashes do.
-pub const WIRE_VERSION: u32 = 4;
+/// - 5: the key-set ID hashes every (amount, key) pair (sp-wire 0.7.0), under the
+///   tag `psp-mint/keyset-id/v2` (it was the 1-unit key only, under `v1`), so
+///   every PSP and FSP key-set ID changes, and with it every request, hash and
+///   record that names one. The mints also publish their keys as a stream of
+///   records on AIR (`air_request::stream`): new cell addresses and record
+///   encodings, which a version 4 mint does not write.
+pub const WIRE_VERSION: u32 = 5;
 
 /// A mint speaks another wire version than this build.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,45 +80,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_wire_version_is_four() {
-        assert_eq!(WIRE_VERSION, 4);
+    fn the_wire_version_is_five() {
+        assert_eq!(WIRE_VERSION, 5);
     }
 
     #[test]
     fn the_same_version_passes() {
-        assert_eq!(check(Some(4)), Ok(()));
+        assert_eq!(check(Some(5)), Ok(()));
     }
 
     #[test]
     fn another_version_is_refused_and_says_both() {
         // a mint still on version 1 (the old seal format)
         let e = check(Some(1)).unwrap_err();
-        assert_eq!(e, WireMismatch::Different { mint: 1, ours: 4 });
+        assert_eq!(e, WireMismatch::Different { mint: 1, ours: 5 });
         assert_eq!(
             e.to_string(),
-            "this mint speaks wire version 1 and this wallet speaks 4: update whichever is older"
+            "this mint speaks wire version 1 and this wallet speaks 5: update whichever is older"
         );
         // a mint still on version 3 (the payload with notes in it)
         let e = check(Some(3)).unwrap_err();
-        assert_eq!(e, WireMismatch::Different { mint: 3, ours: 4 });
+        assert_eq!(e, WireMismatch::Different { mint: 3, ours: 5 });
         assert_eq!(
             e.to_string(),
-            "this mint speaks wire version 3 and this wallet speaks 4: update whichever is older"
+            "this mint speaks wire version 3 and this wallet speaks 5: update whichever is older"
+        );
+        // a mint still on version 4 (the key-set ID of the 1-unit key)
+        let e = check(Some(4)).unwrap_err();
+        assert_eq!(e, WireMismatch::Different { mint: 4, ours: 5 });
+        assert_eq!(
+            e.to_string(),
+            "this mint speaks wire version 4 and this wallet speaks 5: update whichever is older"
         );
         // and a mint ahead of us
         assert_eq!(
-            check(Some(5)),
-            Err(WireMismatch::Different { mint: 5, ours: 4 })
+            check(Some(6)),
+            Err(WireMismatch::Different { mint: 6, ours: 5 })
         );
     }
 
     #[test]
     fn a_mint_that_reports_no_version_is_refused_with_the_fixed_text() {
         let e = check(None).unwrap_err();
-        assert_eq!(e, WireMismatch::Missing { ours: 4 });
+        assert_eq!(e, WireMismatch::Missing { ours: 5 });
         assert_eq!(
             e.to_string(),
-            "this mint does not report a wire_version (this wallet speaks 4): it is older than wire versions, update it"
+            "this mint does not report a wire_version (this wallet speaks 5): it is older than wire versions, update it"
         );
     }
 }

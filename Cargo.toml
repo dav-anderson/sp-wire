@@ -1,6 +1,6 @@
 [package]
 name = "sp-wire"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT"
@@ -11,8 +11,10 @@ default = []
 # Seal and open the PSP payload. Needs AIR, so it is off unless asked for.
 seal = ["dep:air"]
 # The mint-info request over AIR: the envelopes, the cell addresses, signing and
-# checking a reply. Pure (no network). Implies `seal`, so it needs AIR.
-air-request = ["seal"]
+# checking a reply, and the mints' key streams. Pure (no network). Implies `seal`,
+# so it needs AIR, and turns on secp256k1's global context for the stream cells'
+# key tweak.
+air-request = ["seal", "secp256k1/global-context"]
 # The thin AIR transport (connect, Create, Read, held reads) and an in-process
 # test server. Needs `air_server` and `tokio`.
 air-client = ["air-request", "dep:air_server", "dep:tokio"]
